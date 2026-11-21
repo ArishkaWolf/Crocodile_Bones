@@ -1,0 +1,11 @@
+{
+  "name": "crocodile-bones",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-11-21",
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "crocodile-bones",
+    "database_id": "REPLACE_WITH_DATABASE_ID",
+    "migrations_dir": "drizzle"
+  }]
+}
