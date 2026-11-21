@@ -79,7 +79,7 @@ export class TableScene {
     this.renderer.setSize(width, height); this.camera.aspect = width / height;
     const ratio = width / height;
     this.desktop = innerWidth >= 1000 && innerHeight >= 620;
-    const baseDistance = !this.hero && this.desktop ? 16 : 19.6;
+    const baseDistance = !this.hero && this.desktop ? Math.max(10.5, Math.min(16, height / 34)) : 19.6;
     const distance = !this.hero && height < 260 ? 10.6 : ratio < 1.45 ? baseDistance / ratio * 1.45 : baseDistance;
     this.camera.position.set(0, distance * 0.76, distance * 0.65);
     this.camera.lookAt(0, 0, 0); this.camera.updateProjectionMatrix();
