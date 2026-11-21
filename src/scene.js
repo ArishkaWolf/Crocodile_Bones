@@ -78,7 +78,9 @@ export class TableScene {
     if (!width || !height) return;
     this.renderer.setSize(width, height); this.camera.aspect = width / height;
     const ratio = width / height;
-    const distance = !this.hero && height < 260 ? 10.6 : ratio < 1.45 ? 19.6 / ratio * 1.45 : 19.6;
+    this.desktop = innerWidth >= 1000 && innerHeight >= 620;
+    const baseDistance = !this.hero && this.desktop ? 16 : 19.6;
+    const distance = !this.hero && height < 260 ? 10.6 : ratio < 1.45 ? baseDistance / ratio * 1.45 : baseDistance;
     this.camera.position.set(0, distance * 0.76, distance * 0.65);
     this.camera.lookAt(0, 0, 0); this.camera.updateProjectionMatrix();
   }
@@ -137,7 +139,9 @@ export class TableScene {
       const col = i % columns, row = Math.floor(i / columns);
       const actualCols = Math.min(columns, list.length - row * columns);
       const jitter = Math.sin(i * 13.4) * 0.14;
-      d.target.set((col - (actualCols - 1) / 2) * spacing - (this.hero ? 0 : 1.15), 0.68, (row - (rows - 1) / 2) * spacing + jitter + (this.hero ? 1.4 : 0));
+      const scale = !this.hero && this.desktop ? list.length > 20 ? 1 : list.length > 12 ? 1.12 : 1.35 : 1;
+      d.group.scale.setScalar(scale);
+      d.target.set((col - (actualCols - 1) / 2) * spacing - (this.hero ? 0 : 1.15), 0.18 + scale / 2, (row - (rows - 1) / 2) * spacing + jitter + (this.hero ? 1.4 : 0));
       d.yaw = Math.sin(i * 2.6) * 0.28;
       d.halo.visible = selected.has(die.id);
       if (!rolling && d.group.position.lengthSq() === 0) d.group.position.copy(d.target);

@@ -7,7 +7,9 @@
     "dev": "vite --host 0.0.0.0",
     "build": "node scripts/build.mjs",
     "build:pages": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
+    "build:node": "vite build",
+    "start": "node server/node.js",
+    "preview": "node server/node.js",
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {

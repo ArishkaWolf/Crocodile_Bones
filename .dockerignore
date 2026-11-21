@@ -1,0 +1,8 @@
+node_modules
+.git
+.local
+.openai
+.env*
+artifacts
+dist
+docs/screenshots
