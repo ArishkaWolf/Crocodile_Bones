@@ -75,6 +75,8 @@ export class TableScene {
     if (!this.available) return;
     const { width, height } = this.container.getBoundingClientRect();
     if (!width || !height) return;
+    const resized = this.width !== width || this.height !== height;
+    this.width=width; this.height=height;
     this.renderer.setSize(width, height); this.camera.aspect = width / height;
     const ratio = width / height;
     this.desktop = innerWidth >= 1000 && innerHeight >= 620;
@@ -82,6 +84,7 @@ export class TableScene {
     const distance = ratio < 1.45 ? baseDistance / ratio * 1.45 : baseDistance;
     this.camera.position.set(0, distance * (this.hero ? .76 : .82), distance * (this.hero ? .65 : .57));
     this.camera.lookAt(0, 0, 0); this.camera.updateProjectionMatrix();
+    if (resized && this.lastList) this.setDice(this.lastList,this.lastRoll,this.interactive,this.selected);
   }
 
   createDie(die) {
@@ -122,6 +125,7 @@ export class TableScene {
 
   setDice(list, rollId, interactive = false, selected = new Set()) {
     if (!this.available) return;
+    this.lastList=list;
     this.interactive = interactive; this.selected = selected;
     const rolling = this.lastRoll !== rollId;
     this.lastRoll = rollId;
@@ -131,6 +135,8 @@ export class TableScene {
     const columns = list.length <= 6 ? 3 : list.length <= 12 ? 4 : list.length <= 20 ? 6 : 7;
     const rows = Math.ceil(list.length / columns);
     const spacing = list.length > 20 ? 1.08 : list.length > 12 ? 1.25 : 1.6;
+    const phoneOffset = !this.hero && innerHeight <= 450 && innerWidth > innerHeight
+      ? Math.min(2,Math.max(0,3.7-(rows-1)*spacing/2)) : 0;
     list.forEach((die, i) => {
       let d = this.dice.get(die.id);
       if (d && (d.value !== die.value || d.color !== die.color)) { this.removeDie(die.id); d = null; }
@@ -140,7 +146,7 @@ export class TableScene {
       const jitter = Math.sin(i * 13.4) * 0.14;
       const scale = !this.hero ? list.length > 20 ? .86 : list.length > 12 ? 1 : 1.2 : 1;
       d.group.scale.setScalar(scale);
-      d.target.set((col - (actualCols - 1) / 2) * spacing - (this.hero ? 0 : .7), 0.18 + scale / 2, (row - (rows - 1) / 2) * spacing + jitter + (this.hero ? 1.4 : 0));
+      d.target.set((col - (actualCols - 1) / 2) * spacing - (this.hero ? 0 : .7), 0.18 + scale / 2, (row - (rows - 1) / 2) * spacing + jitter + (this.hero ? 1.4 : phoneOffset));
       d.yaw = Math.sin(i * 2.6) * 0.28;
       d.halo.visible = selected.has(die.id);
       if (!rolling && d.group.position.lengthSq() === 0) d.group.position.copy(d.target);

@@ -15,9 +15,9 @@
 .table-seat { position: absolute; width: var(--seat-width); text-align: left; pointer-events: auto; color: #f0f1df; }
 .seat-south { top:calc(100% - 214px); bottom:auto; left: 50%; transform: translateX(-50%); }
 .seat-north { top: 22px; left: 50%; transform: translateX(-50%); }
-.seat-west { left: 2.5%; top: 38%; transform: translateY(-50%); }
+.seat-west { left: 1%; top: 38%; transform: translateY(-50%); }
 .seat-east { right: 2.5%; top: 38%; transform: translateY(-50%); }
-.seat-north-west { left: 31%; top: 6%; transform: translateX(-50%); }
+.seat-north-west { left: 29%; top: max(12px,calc(6% - 20px)); transform: translateX(-50%); }
 .seat-north-east { right: 19%; top: 6%; transform: translateX(50%); }
 .seat-profile { display: flex; gap: 13px; align-items: center; min-height: var(--avatar-size); position: relative; }
 .seat-avatar { position: relative; border: 2px solid #86946d66; padding: 3px; background: #1a382b; width: var(--avatar-size); height: var(--avatar-size); flex-shrink: 0; border-radius: 50%; box-shadow: 0 6px 22px #001b1870, inset 0 0 0 3px #072119; transition: border-color .4s, box-shadow .4s, transform .25s; }
@@ -76,7 +76,10 @@
 .bid-paper.is-flipping .bid-paper-inner { animation: paper-flip .75s cubic-bezier(.22,.8,.22,1) var(--flip-delay) both; }
 .bid-paper.is-burned .bid-front b { color: #93452c; text-decoration: line-through; text-decoration-thickness: 2px; }
 .burned-label { position: absolute; top: calc(100% + 3px); width: 140%; left: -20%; text-align: center; color: #e3aa8c; font-size: 10px; }
-.seat-slam { position: absolute; right: -25px; top: calc(var(--avatar-size) + 12px); border: 1px solid #e0b28355; background: #422c23; font-size: 18px; padding: 5px; border-radius: 50%; }
+.seat-slam { position: absolute; right: 0; top: calc(var(--avatar-size) + 12px); border: 1px solid #e0b28355; background: #422c23; font-size: 18px; padding: 5px; border-radius: 50%; }
+.claim-summary { justify-content:flex-end; }
+.claim-heading>h2 { font-size:24px; line-height:1.45; margin:0; }
+@media(max-height:450px) { .claim-heading>h2 { font-size:18px; } }
 .table-game .card-dock { top: 28.5%; right: auto; left: 65%; width: 105px; transform: rotate(5deg); display: flex; flex-direction: column; align-items: center; pointer-events: auto; z-index: 2; transition:opacity .3s; }
 .table-game .card-dock.awaiting-award { opacity:.3; }
 .table-game .active-card-image { width: clamp(75px,9vw,115px); position: relative; z-index: 2; transition: transform .3s, filter .3s; }
@@ -197,7 +200,7 @@
   .avatar-emotion-hint { width: 18px; height: 18px; font-size: 13px; }.seat-collection { width: calc(100% - 41px); margin-top: 8px; max-height: 62px; min-height: 29px; padding: 5px; gap: 4px; border-radius: 7px; }
   .mini-die { width: 18px; height: 19px; font-size: 10px; border-radius: 4px; }.seat-dice,.seat-cards { gap: 3px; }.seat-cards img { height: 29px; }.collection-empty { font-size: 8px; }
   .bid-paper { width: 31px; height: 42px; top: calc(var(--avatar-size) + 6px); }.bid-back b { font-size: 17px; }.bid-front b { font-size: 19px; }.bid-back .icon { width: 14px; }.burned-label { font-size: 8px; }.seat-slam { right: -23px; font-size: 15px; padding: 3px; }
-  .seat-north { top: 8px; }.seat-west { left: 2%; top: 38%; }.seat-east { right: 2%; top: 38%; }.seat-south { top:calc(100% - 174px); bottom:auto; }.seat-north-west,.seat-north-east { top: 5%; }
+  .seat-north { top: 8px; }.seat-west { left: 1%; top: 38%; }.seat-east { right: 2%; top: 38%; }.seat-south { top:calc(100% - 174px); bottom:auto; }.seat-north-east { top:5%; }.seat-north-west { left:28.5%; top:max(8px,calc(5% - 12px)); }
   .held-card { width:40px; }.held-card-dice { gap:2px; }.held-card-dice .mini-die { font-size:10px; }.held-card-dice.three-columns { gap:1px; }.held-card-dice.three-columns .mini-die { font-size:7px; }
   .seat-south .seat-collection { max-height:58px; }.seat-south .held-card { width:33px; }
   .table-game .action-panel { bottom: 10px; min-height: 52px; width: min(450px,calc(100% - 32px)); padding: 8px 13px; border-radius: 13px; }
@@ -210,8 +213,9 @@
   .bid-paper .bid-back b { font-size:min(17px,calc(var(--bid-font,26px)*.72)); }
 }
 @media (orientation:landscape) and (max-height: 450px) {
+  .seat-collection:has(.collection-empty) { visibility:hidden; pointer-events:none; }
   .view-game #scene { top: -9%; height: 70%; }.view-game .game.table-game { --seat-width: 150px; --avatar-size: 36px; }
-  .seat-south { top:calc(100% - 164px); bottom:auto; }.seat-north-west,.seat-north-east { top: 4%; }.seat-collection { max-height: 60px; }.seat-name>b { font-size: 12px; }.private-score,.seat-status,.seat-turn { font-size: 9px; }
+  .seat-south { top:calc(100% - 164px); bottom:auto; }.seat-north-east { top:4%; }.seat-north-west { top:8px; }.seat-collection { max-height: 60px; }.seat-name>b { font-size: 12px; }.private-score,.seat-status,.seat-turn { font-size: 9px; }
   .table-game .action-panel { min-height: 42px; padding: 5px 12px; bottom: 7px; width: min(420px,calc(100% - 24px)); }.table-game .action-panel .button { min-height: 32px; padding: 7px 12px; font-size: 11px; }.table-game .action-title h3 { font-size: 12px; }.table-game .card-dock { width: 55px; left: 65%; }.table-game .active-card-image { width: 55px; }.next-card-image { width: 30px; }.table-game .active-card-label { font-size: 7px; }.table-game .take-controls { gap: 12px; }
   .modal.bid-modal { width: min(245px,62dvh); }.paper-bid-form>label { font-size: 10px; }.paper-bid-form>.button { min-height: 30px; font-size: 10px; padding: 5px; }.bid-modal .modal-close { right: -35px; }
   .settings-row { padding: 10px 0; font-size: 12px; }.settings-row>span>small { font-size: 10px; }.settings-navigation { margin: 12px 0; }.settings-test { margin-top: 13px; }
