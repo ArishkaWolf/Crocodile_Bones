@@ -67,7 +67,10 @@ export class TablePresentation {
     for (const el of this.layer.querySelectorAll('.player-reaction')) {
       const rect = this.avatar(el.dataset.player)?.getBoundingClientRect();
       if (!rect) { el.remove(); continue; }
-      el.style.left = `${rect.left + rect.width / 2}px`; el.style.top = `${rect.top + rect.height / 2}px`;
+      const width = el.offsetWidth, height = el.offsetHeight;
+      const rise = -parseFloat(getComputedStyle(el).marginTop);
+      el.style.left = `${Math.max(width / 2 + 8, Math.min(innerWidth - width / 2 - 8, rect.left + rect.width / 2))}px`;
+      el.style.top = `${Math.max(rise + 8, Math.min(innerHeight - (height - rise) - 8, rect.top + rect.height / 2))}px`;
     }
   }
   capture(prev, next) {
