@@ -79,9 +79,9 @@ export class TableScene {
     this.renderer.setSize(width, height); this.camera.aspect = width / height;
     const ratio = width / height;
     this.desktop = innerWidth >= 1000 && innerHeight >= 620;
-    const baseDistance = !this.hero && this.desktop ? Math.max(10.5, Math.min(16, height / 34)) : 19.6;
-    const distance = !this.hero && height < 260 ? 10.6 : ratio < 1.45 ? baseDistance / ratio * 1.45 : baseDistance;
-    this.camera.position.set(0, distance * 0.76, distance * 0.65);
+    const baseDistance = this.hero ? 19.6 : 16.5;
+    const distance = ratio < 1.45 ? baseDistance / ratio * 1.45 : baseDistance;
+    this.camera.position.set(0, distance * (this.hero ? .76 : .9), distance * (this.hero ? .65 : .44));
     this.camera.lookAt(0, 0, 0); this.camera.updateProjectionMatrix();
   }
 
@@ -139,9 +139,9 @@ export class TableScene {
       const col = i % columns, row = Math.floor(i / columns);
       const actualCols = Math.min(columns, list.length - row * columns);
       const jitter = Math.sin(i * 13.4) * 0.14;
-      const scale = !this.hero && this.desktop ? list.length > 20 ? 1 : list.length > 12 ? 1.12 : 1.35 : 1;
+      const scale = !this.hero ? list.length > 20 ? .86 : list.length > 12 ? 1 : 1.2 : 1;
       d.group.scale.setScalar(scale);
-      d.target.set((col - (actualCols - 1) / 2) * spacing - (this.hero ? 0 : 1.15), 0.18 + scale / 2, (row - (rows - 1) / 2) * spacing + jitter + (this.hero ? 1.4 : 0));
+      d.target.set((col - (actualCols - 1) / 2) * spacing - (this.hero ? 0 : .7), 0.18 + scale / 2, (row - (rows - 1) / 2) * spacing + jitter + (this.hero ? 1.4 : 0));
       d.yaw = Math.sin(i * 2.6) * 0.28;
       d.halo.visible = selected.has(die.id);
       if (!rolling && d.group.position.lengthSq() === 0) d.group.position.copy(d.target);
@@ -151,18 +151,37 @@ export class TableScene {
 
   setGame() { this.hero = false; }
 
+  setSelected(ids) { this.selected = new Set(ids); }
+
+  settle() {
+    this.rollStart = -1000000000; this.rollNotified = true;
+    for (const [id,d] of this.dice) { d.group.position.copy(d.target); if (this.selected.has(id)) d.group.position.y += .25; d.group.rotation.set(0,d.yaw,0); }
+  }
+
+  dieScreenPosition(id) {
+    const die = this.dice.get(id); if (!die || !this.available) return null;
+    const p = die.group.position.clone().project(this.camera), rect = this.renderer.domElement.getBoundingClientRect();
+    return { x: rect.left + (p.x + 1) * rect.width / 2, y: rect.top + (1 - p.y) * rect.height / 2, size: Math.max(28, Math.min(70, rect.height / 9)) };
+  }
+
   animate(now) {
     if (this.disposed || !this.available) return;
     requestAnimationFrame(t => this.animate(t));
     if (document.hidden) return;
-    const duration = this.reduced ? 120 : 1650;
-    const progress = Math.min((now - this.rollStart) / duration, 1);
+    const duration = this.reduced ? 120 : 3100;
+    const stagger = this.reduced ? 0 : 24;
+    const totalDuration = duration + Math.max(0,this.dice.size - 1) * stagger;
+    const progress = Math.min((now - this.rollStart) / totalDuration, 1);
+    const fov = !this.hero && !this.reduced && progress < 1 ? 38 - Math.sin(progress * Math.PI) * 2.5 : 38;
+    if (this.camera.fov !== fov) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
     for (const [id, d] of this.dice) {
       const i = [...this.dice.keys()].indexOf(id);
-      if (progress < 1) {
-        const ease = 1 - (1 - progress) ** 3;
-        d.group.position.set(d.target.x + Math.sin(i * 4.4) * (1 - ease) * 4, d.target.y + Math.sin(progress * Math.PI) * 2.6, d.target.z + (1 - ease) * 3);
-        const spin = (1 - ease) * Math.PI * 8;
+      const p = Math.max(0,Math.min((now - this.rollStart - i * stagger) / duration,1));
+      if (p < 1) {
+        const ease = 1 - (1 - p) ** 3;
+        const settle = p > .72 ? Math.abs(Math.sin((p - .72) / .28 * Math.PI * 2)) * (1-p) * 1.2 : 0;
+        d.group.position.set(d.target.x + Math.sin(i * 4.4) * (1 - ease) * 4, d.target.y + Math.sin(p * Math.PI) * (2 + (i%3)*.3) + settle, d.target.z + (1 - ease) * 3);
+        const spin = (1 - ease) * Math.PI * 6;
         d.group.rotation.set(spin * (i % 2 ? -1 : 1), d.yaw + spin, spin * 0.8);
       } else {
         d.group.position.lerp(d.target.clone().add(new THREE.Vector3(0, this.selected.has(id) ? 0.25 : 0, 0)), 0.17);
@@ -170,6 +189,7 @@ export class TableScene {
         if (this.hero && !this.reduced) { d.group.position.y += Math.sin(now * 0.0015 + i) * 0.045; }
       }
       d.halo.visible = this.selected.has(id);
+      d.halo.material.opacity = .72 + Math.sin(now * .003) * .2;
     }
     if (progress === 1 && !this.rollNotified) { this.rollNotified = true; this.onRollEnd?.(); }
     this.renderer.render(this.scene, this.camera);

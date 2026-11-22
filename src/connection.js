@@ -24,11 +24,13 @@ export class RoomConnection {
   receive(data) {
     if (this.stopped) return;
     if (this.state && data.state.version < this.state.version) return;
+    if (this.state && data.state.version === this.state.version && (data.state.social?.revision || 0) < (this.state.social?.revision || 0)) return;
     const previous = this.state; this.state = data.state;
     this.role = data.state.hostId === this.identity.id ? 'host' : 'guest';
     this.onStatus('online'); this.save();
-    const signature = `${data.state.version}:${data.state.players.map(p => `${p.id}:${p.online}`).join(',')}`;
+    const signature = `${data.state.version}:${data.state.phase === 'lobby' ? data.state.players.map(p => `${p.id}:${p.online}`).join(',') : ''}`;
     if (!previous || signature !== this.signature) { this.signature = signature; this.onState(data.state, this.identity.id); }
+    else this.onSocial?.(data.state.social);
   }
   async create(profile, capacity) {
     this.onStatus('connecting');
@@ -47,7 +49,7 @@ export class RoomConnection {
   }
   schedulePoll(delay) {
     clearTimeout(this.timer); if (this.stopped) return;
-    this.timer = setTimeout(() => this.poll(), delay ?? (document.hidden ? 6000 : 850));
+    this.timer = setTimeout(() => this.poll(), delay ?? (document.hidden ? 5000 : 550));
   }
   async poll() {
     if (this.stopped || this.polling) return; this.polling = true;
@@ -61,6 +63,10 @@ export class RoomConnection {
     if (this.stopped) throw new Error('Соединение с комнатой закрыто.');
     const result = await this.request(`/${this.code}/action`, 'POST', { action, requestId: crypto.randomUUID() });
     this.receive(result);
+  }
+  async signal(signal) {
+    if (this.stopped) return;
+    this.receive(await this.request(`/${this.code}/signal`, 'POST', { signal, requestId: crypto.randomUUID() }));
   }
   kick(id) { return this.action({ type: 'remove', playerId: id }); }
   close(clear = true) {

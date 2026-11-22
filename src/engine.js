@@ -40,8 +40,8 @@ export function createRoom({ code, capacity, player }) {
   };
 }
 
-function event(s, text, type = 'info') {
-  s.log.push({ id: s.log.length ? s.log.at(-1).id + 1 : 1, round: s.round, text, type });
+function event(s, text, type = 'info', detail = {}) {
+  s.log.push({ id: s.log.length ? s.log.at(-1).id + 1 : 1, round: s.round, text, type, ...detail });
   if (s.log.length > 80) s.log.shift();
 }
 
@@ -102,7 +102,7 @@ export function validClaim(dice, card, rule) {
 function award(s, player, ids) {
   player.cards.push({ ...s.active });
   for (const die of player.dice) if (ids.includes(die.id)) die.card = s.active.id;
-  event(s, `${player.name} получает карту ${cardLabel(s.active, s.wildRule)}. Кубики на ней приносят вдвое больше очков.`, 'card');
+  event(s, `${player.name} получает карту ${cardLabel(s.active, s.wildRule)}. Кубики на ней приносят вдвое больше очков.`, 'card', { playerId: player.id, card: { ...s.active }, diceIds: [...ids] });
   s.active = s.deck.shift() || null;
 }
 
@@ -121,7 +121,7 @@ function advance(s) {
   while (s.turn < s.order.length) {
     const id = s.order[s.turn];
     if (canMakeSum(s.table, s.bids[id])) { s.phase = 'collect'; return; }
-    event(s, `${s.players.find(p => p.id === id).name}: ставку ${s.bids[id]} уже не собрать — пропуск.`, 'skip');
+    event(s, `${s.players.find(p => p.id === id).name}: ставку ${s.bids[id]} уже не собрать — пропуск.`, 'skip', { playerId: id });
     s.turn++;
   }
   s.phase = 'roundEnd';
@@ -199,7 +199,7 @@ export function reduceGame(state, actorId, action, rng = randomInt) {
       if (s.submitted.length === s.players.length) {
         const priority = clockwise(s).map(p => p.id);
         s.order = [...priority].sort((a, b) => s.bids[a] - s.bids[b] || priority.indexOf(a) - priority.indexOf(b));
-        event(s, `Ставки раскрыты: ${s.order.map(id => `${s.players.find(p => p.id === id).name} — ${s.bids[id]}`).join(', ')}.`, 'reveal');
+        event(s, `Ставки раскрыты: ${s.order.map(id => `${s.players.find(p => p.id === id).name} — ${s.bids[id]}`).join(', ')}.`, 'reveal', { at: Date.now() });
         advance(s);
       }
       break;
@@ -208,7 +208,7 @@ export function reduceGame(state, actorId, action, rng = randomInt) {
       const dice = selectedDice(s.table, action.ids);
       assert(dice.reduce((sum, d) => sum + d.value, 0) === s.bids[actorId], 'Сумма выбранных кубиков должна точно совпасть со ставкой.');
       actor.dice.push(...dice); s.table = s.table.filter(d => !action.ids.includes(d.id));
-      event(s, `${actor.name} забирает ${dice.length} куб. на ${s.bids[actorId]} очк.`, 'take');
+      event(s, `${actor.name} забирает ${dice.length} куб. на ${s.bids[actorId]} очк.`, 'take', { playerId: actorId, dice: structuredClone(dice) });
       s.turn++; advance(s);
       break;
     }

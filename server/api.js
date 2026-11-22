@@ -1,4 +1,5 @@
 import { createRoom, reduceGame, publicView, randomInt, AVATAR_COUNT } from '../src/engine.js';
+import { socialView, applySignal } from './social.js';
 const TTL = 24 * 60 * 60 * 1000;
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Player-Id', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json; charset=utf-8' } });
@@ -11,6 +12,7 @@ function validateProfile(profile) {
 function snapshot(data, id) {
   const s = publicView(data.state, id);
   for (const p of s.players) p.online = Date.now() - (data.seen[p.id] || 0) < 45000;
+  s.social = socialView(data);
   return { state: s };
 }
 async function authenticate(data, req) {
@@ -97,8 +99,19 @@ export async function handleAPI(req, env) {
         for (const p of data.state.players) p.online = Date.now() - (data.seen[p.id] || 0) < 45000;
         data.seen[id] = Date.now();
         data.state = reduceGame(data.state, id, payload.action);
+        if (type === 'rematch') data.social = { revision: (data.social?.revision || 0) + 1, reactions: [], slams: {} };
         if (type === 'remove') { delete data.tokens[payload.action.playerId]; delete data.seen[payload.action.playerId]; }
         data.requests.push(`${id}:${payload.requestId}`); data.requests = data.requests.slice(-100);
+        if (await write(env.DB, code, data, rev)) return json(snapshot(data, id));
+        continue;
+      }
+      if (req.method === 'POST' && operation === 'signal') {
+        if (typeof payload.requestId !== 'string' || payload.requestId.length > 100) problem('Нет идентификатора действия.');
+        const key = `${id}:${payload.requestId}`;
+        if (data.requests.includes(key)) return json(snapshot(data, id));
+        applySignal(data, id, payload.signal);
+        data.seen[id] = Date.now();
+        data.requests.push(key); data.requests = data.requests.slice(-100);
         if (await write(env.DB, code, data, rev)) return json(snapshot(data, id));
         continue;
       }

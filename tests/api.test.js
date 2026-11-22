@@ -65,3 +65,22 @@ test('concurrent bids survive compare-and-swap without lost actions', async () =
     assert.equal(next.state.first, 1); assert.equal(guestRoll.status, 200); assert.equal(guestRoll.state.table.length, 18);
   } finally { f.DB.close(); }
 });
+
+test('room signals authenticate participants, deduplicate reactions and reach other players', async () => {
+  const f=fixture();
+  try {
+    const host=await f.call('',{method:'POST',data:{capacity:3,profile:{name:'A',avatar:1}}}), code=host.state.code;
+    const guest=await f.call(`/${code}/join`,{method:'POST',data:{profile:{name:'B',avatar:2}}});
+    const payload={signal:{type:'reaction',sticker:25},requestId:crypto.randomUUID()};
+    assert.equal((await f.call(`/${code}/signal`,{method:'POST',data:payload})).status,401);
+    const sent=await f.call(`/${code}/signal`,{method:'POST',identity:guest.identity,data:payload});
+    assert.equal(sent.status,200);
+    const again=await f.call(`/${code}/signal`,{method:'POST',identity:guest.identity,data:payload});
+    assert.equal(again.state.social.reactions.length,1);
+    const received=await f.call(`/${code}`,{identity:host.identity});
+    assert.equal(received.state.social.reactions[0].playerId,guest.identity.id);
+    assert.equal(received.state.social.reactions[0].sticker,25);
+    assert.equal(received.state.version,sent.state.version);
+    assert.equal((await f.call(`/${code}/signal`,{method:'POST',identity:guest.identity,data:{signal:{type:'selection',ids:[],rollId:0,turn:0},requestId:crypto.randomUUID()}})).status,400);
+  } finally {f.DB.close();}
+});
