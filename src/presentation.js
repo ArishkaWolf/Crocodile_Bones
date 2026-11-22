@@ -1,9 +1,19 @@
 const LABELS = ['Привет!', 'Улыбка', 'Смеюсь', 'Смена планов', 'Что?', 'Хитрость', 'Подмигиваю', 'Ура!', 'Отлично!', 'Цветочек', 'Дразнюсь', 'Круто', 'Любовь', 'Ого!', 'Грущу', 'Обидно', 'Злюсь', 'Без слов', 'Не уверен', 'Ничего себе', 'Коварный план', 'Возмущён', 'Ха-ха!', 'Хихикаю', 'Думаю'];
 const colorNames = { blue: 'голубой', green: 'зелёный', yellow: 'жёлтый' };
+const takeTime = ev => 950 + Math.max(0,ev.dice.length-1)*65;
+const awardTime = ev => 3100 + Math.max(0,(ev.diceIds?.length || 1)-1)*110;
+function flyingDie(d) {
+  const node = document.createElement('div'); node.className = `flying-die ${d.color}`;
+  const pips = value => `<i class="flight-face face-${value}">${Array.from({length:value},()=>'<em></em>').join('')}</i>`;
+  const rest=[1,2,3,4,5,6].filter(v=>v!==d.value&&v!==7-d.value), right=rest[0], top=rest.find(v=>v!==right&&v!==7-right);
+  node.innerHTML = `<span class="flight-cube">${[d.value,right,top,7-d.value,7-right,7-top].map(pips).join('')}</span>`;
+  node.setAttribute('aria-label', `${d.value}, ${colorNames[d.color]} кубик`);
+  return node;
+}
 export class TablePresentation {
-  constructor({ asset, signal, getState, getMyId, scene, onSlam }) {
-    Object.assign(this, { asset, signal, getState, getMyId, scene, onSlam });
-    this.seen = new Set(); this.effects = new Set();
+  constructor({ asset, signal, getState, getMyId, scene, onSlam, onAward }) {
+    Object.assign(this, { asset, signal, getState, getMyId, scene, onSlam, onAward });
+    this.seen = new Set(); this.timers = new Set();
     this.layer = document.createElement('div'); this.layer.className = 'table-effects'; document.body.append(this.layer);
     document.addEventListener('pointerdown', event => {
       if (this.picker && !event.target.closest('.reaction-picker, [data-action="emotions"]')) this.closePicker();
@@ -89,27 +99,79 @@ export class TablePresentation {
       if (!target) continue;
       if (ev.type === 'take') {
         ev.dice.forEach((d, i) => {
-          const node = document.createElement('div'); node.className = `flying-die ${d.color}`;
-          const pips = value => `<i class="flight-face face-${value}">${Array.from({length:value},()=>'<em></em>').join('')}</i>`;
-          const rest=[1,2,3,4,5,6].filter(v=>v!==d.value&&v!==7-d.value), right=rest[0], top=rest.find(v=>v!==right&&v!==7-right);
-          node.innerHTML = `<span class="flight-cube">${[d.value,right,top,7-d.value,7-right,7-top].map(pips).join('')}</span>`;
-          node.setAttribute('aria-label', `${d.value}, ${colorNames[d.color]} кубик`);
-          const owned = target.querySelector(`[data-owned-die="${d.id}"]`); this.fly(node, ev.sources[i], target, delay + i * 65, owned);
+          const owned = target.querySelector(`[data-owned-die="${d.id}"]`); this.fly(flyingDie(d), ev.sources[i], target, delay + i * 65, owned);
         });
-        delay += 950 + Math.max(0,ev.dice.length-1)*65;
+        delay += takeTime(ev);
       } else {
-        const node = document.createElement('img'); node.className = 'flying-card'; node.src = this.asset(`cards/${ev.card.id}.webp`); node.alt = '';
-        const rect = ev.source;
-        this.fly(node, rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, size: rect.width } : null, target, delay, target.querySelector(`[data-owned-card="${ev.card.id}"]`));
-        delay += 850;
+        this.award(ev,target,delay);
+        delay += awardTime(ev);
       }
     }
+    if (events.some(ev=>ev.type==='card') && document.documentElement.dataset.motion !== 'reduced') {
+      document.querySelector('.card-dock')?.classList.add('awaiting-award');
+      this.later(()=>document.querySelector('.card-dock')?.classList.remove('awaiting-award'),delay);
+    }
+  }
+  later(fn, delay) {
+    const id=setTimeout(()=>{this.timers.delete(id);fn();},delay);this.timers.add(id);
+  }
+  award(ev,target,delay) {
+    if (document.documentElement.dataset.motion === 'reduced') return;
+    const owned = target.querySelector(`[data-owned-card="${ev.card.id}"]`)?.closest('.held-card');
+    if (!owned) return;
+    const clone=owned.cloneNode(true); clone.classList.remove('arriving'); clone.classList.add('award-card-stack');
+    clone.querySelectorAll('.mini-die').forEach(el=>el.classList.add('arriving'));
+    owned.classList.add('arriving');
+    this.later(()=>{
+      if (!target.isConnected) return;
+      const image=owned.querySelector('img'), ratio=image.naturalHeight/image.naturalWidth || 1.4;
+      const width=Math.min(198,innerHeight*.38), height=width*ratio;
+      const x=Math.max(width/2+20,Math.min(innerWidth-width/2-20,innerWidth*.48));
+      const y=Math.max(height/2+48,innerHeight*.39);
+      const spot=document.createElement('div');spot.className='award-spotlight';this.layer.append(spot);
+      const hero=document.createElement('div');hero.className='award-card';hero.style.cssText=`left:${x-width/2}px;top:${y-height/2}px;width:${width}px;`;
+      hero.append(clone); this.layer.append(hero);
+      const caption=document.createElement('div');caption.className='award-caption';
+      const name=this.getState().players.find(p=>p.id===ev.playerId)?.name || '';
+      caption.textContent=ev.playerId===this.getMyId()?'Карта ваша!':`${name} получает карту`;
+      hero.append(caption);
+      const source=ev.source || {left:x,top:y,width:width*.6,height:height*.6};
+      const sx=source.left+source.width/2, sy=source.top+source.height/2, scale=source.width/width;
+      hero.animate([
+        {transform:`translate(${sx-x}px,${sy-y}px) scale(${scale}) rotate(5deg)`,filter:'drop-shadow(0 4px 4px #0003)'},
+        {transform:'translate(0,-12px) scale(1.04) rotate(-3deg)',filter:'drop-shadow(0 30px 20px #0006)',offset:.78},
+        {transform:'translate(0,0) scale(1) rotate(0deg)',filter:'drop-shadow(0 24px 20px #0005)'},
+      ],{duration:650,easing:'cubic-bezier(.18,.75,.25,1)',fill:'forwards'});
+      const dice=this.getState().players.find(p=>p.id===ev.playerId)?.dice.filter(d=>ev.diceIds?.includes(d.id)) || [];
+      this.later(()=>{
+        dice.forEach((d,i)=>{
+          const slot=clone.querySelector(`[data-owned-die="${d.id}"]`), from=target.querySelector(`[data-owned-die="${d.id}"]`);
+          if (!slot) return;
+          const r=(from||target).getBoundingClientRect(), size=36, dest=slot.getBoundingClientRect();
+          this.fly(flyingDie(d),{x:r.left+r.width/2,y:r.top+r.height/2,size},clone,i*110,slot,{duration:650,endScale:dest.width/size,award:true});
+        });
+      },1000);
+      this.later(()=>this.onAward?.(),1650+Math.max(0,dice.length-1)*110);
+      this.later(()=>{
+        if (!owned.isConnected) {hero.remove();spot.remove();return;}
+        const dest=owned.getBoundingClientRect(), tx=dest.left+dest.width/2,ty=dest.top+dest.height/2;
+        caption.animate([{opacity:1},{opacity:0}],{duration:180,fill:'forwards'});
+        spot.animate([{opacity:1},{opacity:0}],{duration:650,fill:'forwards'});
+        hero.getAnimations().forEach(a=>a.cancel());
+        const leave=hero.animate([
+          {transform:'translate(0,0) scale(1) rotate(0deg)',opacity:1},
+          {transform:`translate(${(tx-x)*.55}px,${(ty-y)*.55-35}px) scale(.8) rotate(-8deg)`,opacity:1,offset:.5},
+          {transform:`translate(${tx-x}px,${ty-y}px) scale(${dest.width/width}) rotate(0deg)`,opacity:.8},
+        ],{duration:800,easing:'cubic-bezier(.4,0,.2,1)',fill:'forwards'});
+        leave.finished.then(()=>{hero.remove();spot.remove();owned.classList.remove('arriving');target.classList.remove('collection-arrived');void target.offsetWidth;target.classList.add('collection-arrived');}).catch(()=>{hero.remove();spot.remove();});
+      },awardTime(ev)-800);
+    },delay);
   }
   duration(events) {
     if (document.documentElement.dataset.motion === 'reduced') return events.length ? 120 : 0;
-    return events.reduce((n,ev)=>n+(ev.type === 'take' ? 950 + Math.max(0,ev.dice.length-1)*65 : 850),0);
+    return events.reduce((n,ev)=>n+(ev.type === 'take' ? takeTime(ev) : awardTime(ev)),0);
   }
-  fly(node, source, target, delay, owned) {
+  fly(node, source, target, delay, owned, options={}) {
     const dest = (owned || target).getBoundingClientRect(), end = { x: dest.left + dest.width / 2, y: dest.top + dest.height / 2 };
     source ||= { x: innerWidth / 2, y: innerHeight * .45, size: 50 };
     node.style.width = `${source.size || 50}px`; if (node.classList.contains('flying-die')) node.style.height = `${source.size || 50}px`;
@@ -119,16 +181,16 @@ export class TablePresentation {
     const animation = node.animate([
       { transform: `translate(${source.x}px,${source.y}px) translate(-50%,-50%) scale(1) rotate(-8deg)`, opacity: 1 },
       { transform: `translate(${(source.x + end.x) / 2}px,${Math.min(source.y, end.y) - 60}px) translate(-50%,-50%) scale(1.15) rotate(10deg)`, opacity: 1, offset: .45 },
-      { transform: `translate(${end.x}px,${end.y}px) translate(-50%,-50%) scale(.35) rotate(0deg)`, opacity: .15 },
-    ], { duration: reduce ? 80 : 850, delay: reduce ? 0 : delay, easing: 'cubic-bezier(.3,.1,.2,1)', fill: 'both' });
+      { transform: `translate(${end.x}px,${end.y}px) translate(-50%,-50%) scale(${options.endScale ?? .35}) rotate(0deg)`, opacity: .15 },
+    ], { duration: reduce ? 80 : options.duration || 850, delay: reduce ? 0 : delay, easing: 'cubic-bezier(.3,.1,.2,1)', fill: 'both' });
     animation.finished.then(() => {
       node.remove(); owned?.classList.remove('arriving'); target.classList.remove('collection-arrived'); void target.offsetWidth; target.classList.add('collection-arrived');
-      if (!reduce) {
+      if (!reduce && !options.award) {
         const burst = document.createElement('div'); burst.className = 'arrival-sparks'; burst.style.left = `${end.x}px`; burst.style.top = `${end.y}px`;
         burst.innerHTML = Array.from({length:7},(_,i)=>`<i style="--a:${i*51}deg;--distance:${25+i%3*10}px"></i>`).join('');
         this.layer.append(burst); setTimeout(()=>burst.remove(),700);
       }
     }).catch(() => node.remove());
   }
-  reset() { this.closePicker(); this.layer.replaceChildren(); this.seen.clear(); }
+  reset() { this.closePicker(); for(const id of this.timers) clearTimeout(id);this.timers.clear();this.layer.getAnimations({subtree:true}).forEach(a=>a.cancel());this.layer.replaceChildren(); this.seen.clear(); }
 }

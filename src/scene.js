@@ -38,19 +38,18 @@ export class TableScene {
     Object.assign(key.shadow.camera, { left: -12, right: 12, top: 10, bottom: -10, near: 0.5, far: 40 });
     key.shadow.bias = -0.001; key.shadow.normalBias = 0.03;
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight('#bedcf2', 1.3); rim.position.set(8, 6, -6); this.scene.add(rim);
+    const rim = new THREE.DirectionalLight('#efe1cc', 1.1); rim.position.set(8, 6, -6); this.scene.add(rim);
 
     this.table = new THREE.Group(); this.scene.add(this.table);
-    const edge = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.5, 0.46, 96), new THREE.MeshStandardMaterial({ color: '#1e3229', roughness: 0.7 }));
-    edge.scale.z = 0.66; edge.position.y = -0.33; edge.receiveShadow = true; this.table.add(edge);
-    const trim = new THREE.Mesh(new THREE.CylinderGeometry(7.34, 7.34, 0.13, 96), new THREE.MeshStandardMaterial({ color: '#b19b60', metalness: 0.55, roughness: 0.45 }));
-    trim.scale.z = 0.66; trim.position.y = -0.1; this.table.add(trim);
-    const felt = new THREE.Mesh(new THREE.CylinderGeometry(7.24, 7.24, 0.16, 96), new THREE.MeshStandardMaterial({ color: '#245448', roughness: 0.95 }));
-    felt.scale.z = 0.66; felt.position.y = 0.01; felt.receiveShadow = true; this.table.add(felt);
-    const borderPoints = [];
-    for (let i = 0; i < 128; i++) { const a = i / 128 * Math.PI * 2; borderPoints.push(new THREE.Vector3(Math.cos(a) * 6.95, 0.105, Math.sin(a) * 4.47)); }
-    const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(borderPoints), new THREE.LineBasicMaterial({ color: '#66816a', transparent: true, opacity: 0.45 }));
-    this.table.add(line);
+    const wood = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/textures/walnut.webp`);
+    wood.colorSpace = THREE.SRGBColorSpace;
+    wood.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    const edgeProfile = [[0,-.48],[7.12,-.48],[7.30,-.44],[7.43,-.33],[7.48,-.20],[7.45,-.06],[7.36,.10],[0,.10]].map(([r,y])=>new THREE.Vector2(r,y));
+    const edge = new THREE.Mesh(new THREE.LatheGeometry(edgeProfile,128), new THREE.MeshStandardMaterial({ color: '#76503a', map:wood, roughness:.42, metalness:0 }));
+    edge.scale.z = .66; edge.receiveShadow = true; edge.castShadow = true; this.table.add(edge);
+    const surface = new THREE.Mesh(new THREE.CircleGeometry(7.36,128), new THREE.MeshStandardMaterial({ color:'#c9d6d3',map:wood,roughness:.5,metalness:0 }));
+    surface.rotation.x = -Math.PI/2; surface.scale.y = .66; surface.position.y = .105;
+    surface.receiveShadow = true; this.table.add(surface);
 
     this.bodyGeometry = new RoundedBoxGeometry(1, 1, 1, 3, 0.14);
     this.pipGeometry = new THREE.CircleGeometry(0.068, 12);
@@ -79,9 +78,9 @@ export class TableScene {
     this.renderer.setSize(width, height); this.camera.aspect = width / height;
     const ratio = width / height;
     this.desktop = innerWidth >= 1000 && innerHeight >= 620;
-    const baseDistance = this.hero ? 19.6 : 16.5;
+    const baseDistance = this.hero ? 19.6 : 16.2;
     const distance = ratio < 1.45 ? baseDistance / ratio * 1.45 : baseDistance;
-    this.camera.position.set(0, distance * (this.hero ? .76 : .9), distance * (this.hero ? .65 : .44));
+    this.camera.position.set(0, distance * (this.hero ? .76 : .82), distance * (this.hero ? .65 : .57));
     this.camera.lookAt(0, 0, 0); this.camera.updateProjectionMatrix();
   }
 

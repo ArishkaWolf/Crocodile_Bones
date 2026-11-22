@@ -59,7 +59,7 @@ try { sounds = { ...sounds, ...JSON.parse(localStorage.getItem('crocodile-sound'
 sound = sounds.roll || sounds.turns;
 const scene = new TableScene(sceneEl, pickDie, () => { if (rolling) { rolling = false; if (state) render(); } });
 scene.reduced = !motion;
-const presentation = new TablePresentation({ asset, getState: () => state, getMyId: () => myId, scene, signal: sendSignal, onSlam: () => beep('slam') });
+const presentation = new TablePresentation({ asset, getState: () => state, getMyId: () => myId, scene, signal: sendSignal, onSlam: () => beep('slam'), onAward: () => beep('award') });
 
 function toast(message) {
   const el = document.querySelector('#toast'); el.textContent = message; el.classList.add('show');
@@ -70,6 +70,15 @@ function beep(kind = 'click') {
   try {
     audio ||= new (window.AudioContext || window.webkitAudioContext)();
     if (audio.state === 'suspended') audio.resume();
+    if (kind === 'award') {
+      [523.25,659.25,783.99].forEach((frequency,i)=>{
+        const start=audio.currentTime+i*.12, osc=audio.createOscillator(), gain=audio.createGain();
+        osc.type='sine';osc.frequency.value=frequency;
+        gain.gain.setValueAtTime(.001,start);gain.gain.exponentialRampToValueAtTime(.07*sounds.volume+.001,start+.025);gain.gain.exponentialRampToValueAtTime(.001,start+.6);
+        osc.connect(gain);gain.connect(audio.destination);osc.start(start);osc.stop(start+.62);
+      });
+      return;
+    }
     if (kind === 'roll') {
       for (let i = 0; i < 24; i++) {
         const start = audio.currentTime + i * 0.115;
@@ -212,16 +221,25 @@ function renderLobby() {
 }
 const phaseNames = { roll: 'Новый бросок', bidding: 'Тайные ставки', collect: 'Сбор кубиков', claim: 'Карта ваша!', roundEnd: 'Раунд завершён', finished: 'Итоги партии' };
 function currentPlayer() { return state.players.find(p => p.id === (state.phase === 'claim' ? state.pending?.playerId : state.order[state.turn])); }
+function miniDie(d) {
+  return `<span class="mini-die ${d.color}" data-owned-die="${d.id}" aria-label="Кубик ${d.value}">${d.value}</span>`;
+}
+function cardStack(p, c, large = false) {
+  const dice = p.dice.filter(d => d.card === c.id);
+  return `<span class="held-card ${large ? 'large-card-stack' : ''}" aria-label="${e(cardLabel(c,state.wildRule))}, кубики: ${dice.map(d=>d.value).join(', ')}"><img src="${cardImage(c.id)}" alt="${e(cardLabel(c,state.wildRule))}" data-owned-card="${c.id}"/><span class="held-card-dice ${dice.length > 4 ? 'three-columns' : ''}">${dice.map(miniDie).join('')}</span></span>`;
+}
 function playerSeat(p, i) {
-  const mine = p.id === myId, current = currentPlayer()?.id === p.id && ['collect', 'claim'].includes(state.phase);
+  const mine = p.id === myId;
+  const casting = (state.phase === 'roll' || rolling) && state.players[state.first].id === p.id;
+  const current = casting || currentPlayer()?.id === p.id && ['collect', 'claim'].includes(state.phase);
   const submitted = state.submitted.includes(p.id), reveal = state.phase !== 'bidding' && Object.hasOwn(state.bids, p.id);
   const relative = (i - state.players.findIndex(x => x.id === myId) + state.capacity) % state.capacity;
   const position = state.capacity === 4 ? ['south','west','north','east'][relative] : ['south','north-west','north-east'][relative];
   const burned = state.log.some(ev => ev.round === state.round && ev.type === 'skip' && ev.playerId === p.id);
   const index = state.order.indexOf(p.id), flip = revealing && revealRound === state.round;
   return '<article class="table-seat seat-'+position+' '+(mine?'is-you ':'')+(current?'is-current ':'')+(submitted?'is-ready ':'')+(state.phase==='bidding'&&!submitted&&!rolling?'is-thinking ':'')+'" data-player="'+p.id+'">'
-    +'<div class="seat-profile"><button class="seat-avatar reaction-anchor" '+(mine?'data-action="emotions"':'data-inspect="'+p.id+'"')+' aria-label="'+e(p.name)+(mine?', открыть эмоции':', посмотреть коллекцию')+'"><img src="'+avatar(p.avatar)+'" alt=""/>'+(mine?'<span class="avatar-emotion-hint">☺</span>':'')+'</button><div class="seat-name"><b>'+e(p.name)+'</b>'+(mine?'<span class="private-score">'+score(p)+' очк. <small>только вам</small></span>':'')+(current?'<span class="seat-turn">Ваш ход</span>'.replace('Ваш ход',mine?'Ваш ход':'Ходит'):state.phase==='bidding'&&!rolling?'<span class="seat-status">'+(submitted?'Готов':'Думает…')+'</span>':'')+'</div>'+(i===state.first?'<span class="seat-cup" title="Первый бросок">'+icon('cup')+'</span>':'')+'</div>'
-    +'<button class="seat-collection" data-inspect="'+p.id+'" aria-label="Рассмотреть кубики и карты: '+e(p.name)+'"><span class="seat-dice">'+p.dice.map(d=>'<span class="mini-die '+d.color+(d.card?' on-card':'')+'" data-owned-die="'+d.id+'">'+d.value+'</span>').join('')+'</span><span class="seat-cards">'+p.cards.map(c=>'<img src="'+cardImage(c.id)+'" alt="'+e(cardLabel(c,state.wildRule))+'" data-owned-card="'+c.id+'"/>').join('')+'</span>'+(!p.dice.length&&!p.cards.length?'<span class="collection-empty">Кубики и карты</span>':'')+'</button>'
+    +'<div class="seat-profile"><button class="seat-avatar reaction-anchor" '+(mine?'data-action="emotions"':'data-inspect="'+p.id+'"')+' aria-label="'+e(p.name)+(mine?', открыть эмоции':', посмотреть коллекцию')+'"><img src="'+avatar(p.avatar)+'" alt=""/>'+(mine?'<span class="avatar-emotion-hint">☺</span>':'')+'</button><div class="seat-name"><b>'+e(p.name)+'</b>'+(mine?'<span class="private-score">'+score(p)+' очк.</span>':'')+(current?'<span class="seat-turn">Ваш ход</span>'.replace('Ваш ход',casting ? (mine?'Ваш бросок':'Бросает кубики') : mine?'Ваш ход':'Ходит'):state.phase==='bidding'&&!rolling?'<span class="seat-status">'+(submitted?'Готов':'Думает…')+'</span>':'')+'</div>'+(i===state.first?'<span class="seat-cup" title="Первый бросок">'+icon('cup')+'</span>':'')+'</div>'
+    +'<button class="seat-collection" data-inspect="'+p.id+'" aria-label="Рассмотреть кубики и карты: '+e(p.name)+'"><span class="seat-dice">'+p.dice.filter(d=>!d.card).map(miniDie).join('')+'</span><span class="seat-cards">'+p.cards.map(c=>cardStack(p,c)).join('')+'</span>'+(!p.dice.length&&!p.cards.length?'<span class="collection-empty">Кубики и карты</span>':'')+'</button>'
     +(submitted?'<div class="bid-paper '+(reveal?'is-open ':'')+(flip?'is-flipping ':'')+(burned?'is-burned':'')+'" style="--bid-font:'+Math.min(26,72/String(state.bids[p.id] ?? 0).length)+'px;--flip-delay:'+(Math.max(-800,index*420-(performance.now()-revealStarted)))+'ms"><div class="bid-paper-inner"><div class="bid-back">'+(mine&&!reveal?'<b>'+state.bids[p.id]+'</b>':icon('lock'))+'</div><div class="bid-front"><img src="'+cardImage('list')+'" alt=""/><b>'+ (reveal?state.bids[p.id]:'')+'</b></div></div>'+(burned?'<span class="burned-label">Сгорела</span>':'')+'</div>':'')
     +(mine&&burned&&!state.social?.slammed?.includes(myId)?'<button class="seat-slam" data-action="slam" aria-label="Ударить по столу">✊</button>':'')+'</article>';
 }
@@ -299,7 +317,7 @@ function renderModal() {
   if (modal === 'inventory') {
     const p = state.players.find(p => p.id === inspectId); if (!p) { closeModal(); return; }
     wide = true;
-    content = `<div class="inventory-heading"><img src="${avatar(p.avatar)}" alt=""/><div><div class="eyebrow">КОЛЛЕКЦИЯ ИГРОКА</div><h2>${e(p.name)}</h2></div>${p.id === myId || state.phase === 'finished' ? `<strong>${score(p)}<small>очков</small></strong>` : ''}</div><h3>Свободные кубики <span>×1</span></h3><div class="inventory-dice">${p.dice.filter(d => !d.card).map(d => dieButton(d, false, 'disabled')).join('') || '<p class="empty-copy">Пока пусто. Всё впереди.</p>'}</div><h3>Карты и закреплённые кубики <span>×2</span></h3><div class="inventory-cards">${p.cards.map(c => `<div class="owned-card"><button class="owned-card-preview" data-card-preview="${c.id}" aria-label="Приблизить карту"><img src="${cardImage(c.id)}" alt="${e(cardLabel(c, state.wildRule))}"/></button><div><b>${e(cardLabel(c, state.wildRule))}</b><div class="inventory-dice">${p.dice.filter(d => d.card === c.id).map(d => dieButton(d, false, 'disabled')).join('')}</div>${p.id === myId || state.phase === 'finished' ? `<span>${p.dice.filter(d => d.card === c.id).reduce((n, d) => n + d.value * 2, 0)} очков</span>` : ''}</div></div>`).join('') || '<p class="empty-copy">Собирайте цвета, чтобы получать карты.</p>'}</div>`;
+    content = `<div class="inventory-heading"><img src="${avatar(p.avatar)}" alt=""/><div><div class="eyebrow">КОЛЛЕКЦИЯ ИГРОКА</div><h2>${e(p.name)}</h2></div>${p.id === myId || state.phase === 'finished' ? `<strong>${score(p)}<small>очков</small></strong>` : ''}</div><h3>Свободные кубики <span>×1</span></h3><div class="inventory-dice">${p.dice.filter(d => !d.card).map(d => dieButton(d, false, 'disabled')).join('') || '<p class="empty-copy">Пока пусто. Всё впереди.</p>'}</div><h3>Карты и закреплённые кубики <span>×2</span></h3><div class="inventory-cards">${p.cards.map(c => `<div class="owned-card"><button class="owned-card-preview" data-card-preview="${c.id}" aria-label="Приблизить карту">${cardStack(p,c,true)}</button><div><b>${e(cardLabel(c, state.wildRule))}</b>${p.id === myId || state.phase === 'finished' ? `<span>${p.dice.filter(d => d.card === c.id).reduce((n, d) => n + d.value * 2, 0)} очков</span>` : ''}</div></div>`).join('') || '<p class="empty-copy">Собирайте цвета, чтобы получать карты.</p>'}</div>`;
   }
   if (modal === 'settings') {
     content = `<h2>Настройки</h2><div class="settings-navigation"><button class="button secondary" data-action="rules">${icon('help')} Как играть</button>${state ? `<button class="button secondary" data-action="fullscreen">${icon('expand')} Полный экран</button>` : ''}</div><p>Настройки сохраняются на этом устройстве.</p><label class="settings-row"><span>Плавные анимации<small>Броски, полёт карт и эмоции</small></span><input type="checkbox" id="setting-motion" ${motion ? 'checked' : ''}/></label><label class="settings-row"><span>Звук кубиков<small>Перекатывание и стук во время броска</small></span><input type="checkbox" id="setting-roll" ${sounds.roll ? 'checked' : ''}/></label><label class="settings-row"><span>Звуки игры<small>Выбор кубиков, раскрытие ставок и ваш ход</small></span><input type="checkbox" id="setting-turns" ${sounds.turns ? 'checked' : ''}/></label><label class="settings-row"><span>Громкость</span><input id="setting-volume" type="range" min="0" max="1" step="0.05" value="${sounds.volume}" aria-label="Громкость звуков"/></label><button class="button secondary settings-test" data-action="test-sound">Послушать кубики ${icon('volume')}</button>${state ? `<div class="settings-navigation"><button class="text-button" data-action="log">${icon('clock')} Ход партии</button><button class="text-button" data-action="leave">${icon('exit')} Выйти из комнаты</button></div>` : ''}`;
@@ -318,7 +336,8 @@ function renderModal() {
   if (modal === 'card' || modal === 'card-preview') {
     const preview = modal === 'card' ? state.active : [...state.players.flatMap(p => p.cards), state.nextCard, state.active].find(c => c?.id === previewCardId);
     if (!preview) { closeModal(); return; }
-    content = `<div class="card-preview"><img src="${cardImage(preview.id)}" alt="Карта"/><h2>${e(cardLabel(preview, state.wildRule))}</h2><p>Эти кубики на карте приносят вдвое больше очков.<br>Карту нужно забрать, как только свободных кубиков достаточно.</p></div>`;
+    const owner = state.players.find(p=>p.cards.some(c=>c.id===preview.id));
+    content = `<div class="card-preview">${owner ? cardStack(owner,preview,true) : `<img src="${cardImage(preview.id)}" alt="Карта"/>`}<h2>${e(cardLabel(preview, state.wildRule))}</h2><p>Эти кубики на карте приносят вдвое больше очков.<br>Карту нужно забрать, как только свободных кубиков достаточно.</p></div>`;
   }
   if (modal === 'bid') {
     if (state.phase !== 'bidding' || state.submitted.includes(myId)) { closeModal(); return; }
