@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const PALETTE = { green: '#229b16', blue: '#1461df', yellow: '#ffd000' };
 const positions = {
@@ -29,33 +30,34 @@ export class TableScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = .9;
     container.appendChild(this.renderer.domElement);
-    this.scene.add(new THREE.AmbientLight('#ffffff', 1.4));
-    const key = new THREE.DirectionalLight('#fff6e1', 3);
+    const room = new RoomEnvironment(), pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(room,.06).texture;
+    this.scene.environmentIntensity = .3;
+    room.dispose(); pmrem.dispose();
+    this.scene.add(new THREE.AmbientLight('#ffffff', .8));
+    const key = new THREE.DirectionalLight('#fff6e1', 2.3);
     key.position.set(-5, 12, 6); key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
     Object.assign(key.shadow.camera, { left: -12, right: 12, top: 10, bottom: -10, near: 0.5, far: 40 });
     key.shadow.bias = -0.001; key.shadow.normalBias = 0.03;
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight('#efe1cc', 1.1); rim.position.set(8, 6, -6); this.scene.add(rim);
+    const rim = new THREE.DirectionalLight('#efe1cc', .8); rim.position.set(8, 6, -6); this.scene.add(rim);
 
     this.table = new THREE.Group(); this.scene.add(this.table);
-    const wood = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/textures/walnut.webp`);
-    wood.colorSpace = THREE.SRGBColorSpace;
-    wood.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
-    const edgeProfile = [[0,-.48],[7.12,-.48],[7.30,-.44],[7.43,-.33],[7.48,-.20],[7.45,-.06],[7.36,.10],[0,.10]].map(([r,y])=>new THREE.Vector2(r,y));
-    const edge = new THREE.Mesh(new THREE.LatheGeometry(edgeProfile,128), new THREE.MeshStandardMaterial({ color: '#76503a', map:wood, roughness:.42, metalness:0 }));
-    edge.scale.z = .66; edge.receiveShadow = true; edge.castShadow = true; this.table.add(edge);
-    const surface = new THREE.Mesh(new THREE.CircleGeometry(7.36,128), new THREE.MeshStandardMaterial({ color:'#c9d6d3',map:wood,roughness:.5,metalness:0 }));
-    surface.rotation.x = -Math.PI/2; surface.scale.y = .66; surface.position.y = .105;
+    const edgeProfile = [[0,-.28],[5.10,-.28],[5.23,-.25],[5.32,-.17],[5.36,-.06],[5.33,.035],[5.25,.10],[0,.10]].map(([r,y])=>new THREE.Vector2(r,y));
+    const edge = new THREE.Mesh(new THREE.LatheGeometry(edgeProfile,128), new THREE.MeshPhysicalMaterial({ color:'#384629',roughness:.42,metalness:0,clearcoat:.25,clearcoatRoughness:.4,envMapIntensity:.25 }));
+    edge.receiveShadow = true; edge.castShadow = true; this.table.add(edge);
+    const surface = new THREE.Mesh(new THREE.CircleGeometry(5.25,128), new THREE.MeshPhysicalMaterial({ color:'#536437',roughness:.46,metalness:0,clearcoat:.38,clearcoatRoughness:.3,envMapIntensity:.3 }));
+    surface.rotation.x = -Math.PI/2; surface.position.y = .105;
     surface.receiveShadow = true; this.table.add(surface);
 
     this.bodyGeometry = new RoundedBoxGeometry(1, 1, 1, 3, 0.14);
     this.pipGeometry = new THREE.CircleGeometry(0.068, 12);
     this.pipMaterial = new THREE.MeshStandardMaterial({ color: '#17352b', roughness: 0.9, side: THREE.DoubleSide });
     this.bluePipMaterial = new THREE.MeshStandardMaterial({ color: '#fff7e6', roughness: 0.9, side: THREE.DoubleSide });
-    this.materials = Object.fromEntries(Object.entries(PALETTE).map(([c, color]) => [c, new THREE.MeshStandardMaterial({ color, roughness: 0.26, metalness: 0.05 })]));
+    this.materials = Object.fromEntries(Object.entries(PALETTE).map(([c, color]) => [c, new THREE.MeshStandardMaterial({ color, roughness: 0.26, metalness: 0.05, envMapIntensity:.2 })]));
     this.raycaster = new THREE.Raycaster();
     this.pointerDown = event => { this.down = { x: event.clientX, y: event.clientY }; };
     this.pointerUp = event => {
@@ -80,9 +82,10 @@ export class TableScene {
     this.renderer.setSize(width, height); this.camera.aspect = width / height;
     const ratio = width / height;
     this.desktop = innerWidth >= 1000 && innerHeight >= 620;
-    const baseDistance = this.hero ? 19.6 : 16.2;
+    const phone = innerHeight <= 450 && innerWidth > innerHeight;
+    const baseDistance = this.hero ? 19.6 : phone ? 18.2 : 19.5;
     const distance = ratio < 1.45 ? baseDistance / ratio * 1.45 : baseDistance;
-    this.camera.position.set(0, distance * (this.hero ? .76 : .82), distance * (this.hero ? .65 : .57));
+    this.camera.position.set(0, distance * (this.hero ? .76 : .92), distance * (this.hero ? .65 : .39));
     this.camera.lookAt(0, 0, 0); this.camera.updateProjectionMatrix();
     if (resized && this.lastList) this.setDice(this.lastList,this.lastRoll,this.interactive,this.selected);
   }
@@ -134,9 +137,10 @@ export class TableScene {
     for (const id of this.dice.keys()) if (!ids.has(id)) this.removeDie(id);
     const columns = list.length <= 6 ? 3 : list.length <= 12 ? 4 : list.length <= 20 ? 6 : 7;
     const rows = Math.ceil(list.length / columns);
-    const spacing = list.length > 20 ? 1.08 : list.length > 12 ? 1.25 : 1.6;
+    const spacing = list.length > 20 ? .9 : list.length > 12 ? 1.03 : 1.45;
     const phoneOffset = !this.hero && innerHeight <= 450 && innerWidth > innerHeight
-      ? Math.min(2,Math.max(0,3.7-(rows-1)*spacing/2)) : 0;
+      ? list.length > 20 ? 0 : Math.min(1.25,Math.max(0,3.1-(rows-1)*spacing/2)) : 0;
+    const phoneX = phoneOffset ? .4 : 0;
     list.forEach((die, i) => {
       let d = this.dice.get(die.id);
       if (d && (d.value !== die.value || d.color !== die.color)) { this.removeDie(die.id); d = null; }
@@ -144,9 +148,9 @@ export class TableScene {
       const col = i % columns, row = Math.floor(i / columns);
       const actualCols = Math.min(columns, list.length - row * columns);
       const jitter = Math.sin(i * 13.4) * 0.14;
-      const scale = !this.hero ? list.length > 20 ? .86 : list.length > 12 ? 1 : 1.2 : 1;
+      const scale = !this.hero ? list.length > 20 ? .78 : list.length > 12 ? .94 : 1.2 : 1;
       d.group.scale.setScalar(scale);
-      d.target.set((col - (actualCols - 1) / 2) * spacing - (this.hero ? 0 : .7), 0.18 + scale / 2, (row - (rows - 1) / 2) * spacing + jitter + (this.hero ? 1.4 : phoneOffset));
+      d.target.set((col - (actualCols - 1) / 2) * spacing - (this.hero ? 0 : list.length>12 ? 1.3 : .7 + phoneX), 0.18 + scale / 2, (row - (rows - 1) / 2) * spacing + jitter + (this.hero ? 1.4 : phoneOffset));
       d.yaw = Math.sin(i * 2.6) * 0.28;
       d.halo.visible = selected.has(die.id);
       if (!rolling && d.group.position.lengthSq() === 0) d.group.position.copy(d.target);
