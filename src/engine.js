@@ -158,8 +158,10 @@ export function reduceGame(state, actorId, action, rng = randomInt) {
     case 'remove': {
       assert(s.phase === 'lobby', 'Во время партии место сохраняется для переподключения.');
       assert(action.playerId !== s.hostId && (actorId === s.hostId || actorId === action.playerId), 'Нельзя удалить этого игрока.');
+      const firstId=s.players[s.first].id;
       s.players = s.players.filter(p => p.id !== action.playerId);
-      s.first = Math.min(s.first, s.players.length - 1);
+      const firstIndex=s.players.findIndex(p=>p.id===firstId);
+      s.first = firstIndex>=0?firstIndex:Math.min(s.first,s.players.length-1);
       break;
     }
     case 'presence':

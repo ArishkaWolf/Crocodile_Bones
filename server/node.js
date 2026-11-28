@@ -2,14 +2,14 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handleAPI } from './api.js';
+import { handleAPI, startRoomScheduler } from './api.js';
 import { localDatabase } from './local-db.js';
 
 const ROOT = fileURLToPath(new URL('../dist/client/', import.meta.url));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2' };
 const HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' };
 
-export function createGameServer({ database, databasePath = process.env.ROOM_DB_PATH || '.local/rooms.sqlite', clientRoot = ROOT } = {}) {
+export function createGameServer({ database, databasePath = process.env.ROOM_DB_PATH || '.local/rooms.sqlite', clientRoot = ROOT, timers = true } = {}) {
   const DB = database || localDatabase(databasePath);
   const root = path.resolve(clientRoot);
   const server = createServer(async (req, res) => {
@@ -43,7 +43,8 @@ export function createGameServer({ database, databasePath = process.env.ROOM_DB_
       res.end(JSON.stringify({ error: error.code === 'ENOENT' ? 'Не найдено.' : 'Сервер временно недоступен.' }));
     }
   });
-  server.once('close', () => { if (!database) DB.close(); });
+  const stopTimers=timers?startRoomScheduler(DB):()=>{};
+  server.once('close', () => { stopTimers();if (!database) DB.close(); });
   return server;
 }
 

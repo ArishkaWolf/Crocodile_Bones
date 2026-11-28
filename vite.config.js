@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-import { handleAPI } from './server/api.js';
+import { handleAPI, startRoomScheduler } from './server/api.js';
 import { localDatabase } from './server/local-db.js';
 
 export default defineConfig({
@@ -8,7 +8,8 @@ export default defineConfig({
     name: 'local-room-server',
     configureServer(server) {
       const DB = localDatabase();
-      server.httpServer?.once('close', () => DB.close());
+      const stopTimers=startRoomScheduler(DB);
+      server.httpServer?.once('close', () => {stopTimers();DB.close();});
       server.middlewares.use(async (req, res, next) => {
         if (!req.url.startsWith('/api/')) return next();
         try {

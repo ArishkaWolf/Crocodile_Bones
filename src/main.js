@@ -10,6 +10,8 @@ import './style.css';
 import './desktop.css';
 import './table.css';
 import './results.css';
+import './session.css';
+import {timeRemaining,turnLabel} from './session-ui.js';
 import { ResultsSequence } from './results.js';
 import { resultsView } from './results-view.js';
 import { TableScene } from './scene.js';
@@ -52,7 +54,7 @@ let connection = null, state = null, myId = null, status = 'offline', busy = fal
 let selected = new Set(), claimSelected = new Set(), rollKey = null, rolling = false;
 let modal = null, inspectId = null, sound = true, lastPhase = null, toastTimer, audio;
 let revealing = false, revealStarted = 0, revealRound = 0, revealTimer, finishing = false, finishTimer;
-let dealing = false, dealTimer;
+let dealing = false, dealTimer, actionPending = false;
 let pendingPick = null, sendingPick = false, pickTimer, previewCardId = null;
 let sounds = { roll: true, turns: true, volume: 0.5 };
 let motion = true;
@@ -120,7 +122,9 @@ async function copy(text, label) {
   catch { showModal('copy', text); }
 }
 async function send(action) {
-  try { await connection.action(action); beep(); return true; } catch (error) { toast(error.message); return false; }
+  if(actionPending||!connection)return false;
+  actionPending=true;
+  try { await connection.action(action); beep(); return true; } catch (error) { toast(error.message); return false; } finally {actionPending=false;}
 }
 async function sendSignal(signal) {
   try { await connection?.signal(signal); } catch (error) { if (signal.type !== 'selection') toast(error.message); }
@@ -131,7 +135,7 @@ async function flushPick() {
   try { await sendSignal(pick); } finally { sendingPick = false; if (pendingPick) flushPick(); }
 }
 function sharedSelection() {
-  return currentPlayer()?.id === myId ? selected : new Set(state?.social?.selection?.ids || []);
+  return currentPlayer()?.id === myId && state.players.find(p=>p.id===myId)?.control!=='bot' ? selected : new Set(state?.social?.selection?.ids || []);
 }
 function newConnection() {
   return new RoomConnection({
@@ -141,7 +145,7 @@ function newConnection() {
         dealing = true; clearTimeout(dealTimer);
         dealTimer = setTimeout(() => { dealing = false; render(); }, presentation.duration(transfers) + 180);
       }
-      if (prev?.phase !== next.phase || prev?.order[prev.turn] !== next.order[next.turn]) selected.clear();
+      if (prev?.phase !== next.phase || prev?.order[prev.turn] !== next.order[next.turn] || prev?.players.find(p=>p.id===id)?.control!==next.players.find(p=>p.id===id)?.control) selected.clear();
       if (prev?.pending?.cardId !== next.pending?.cardId || prev?.pending?.playerId !== next.pending?.playerId) claimSelected.clear();
       if (next.phase !== 'lobby') {
         const nextKey = String(next.rollId);
@@ -164,17 +168,19 @@ function newConnection() {
       if (next.phase === 'collect' && next.order[next.turn] === id && (prev?.phase !== 'collect' || prev?.order[prev.turn] !== id)) beep('turn');
       busy = false;
       document.title = next.phase === 'lobby' ? 'За столом — Кости Крокодила' : `Раунд ${next.round} — Кости Крокодила`;
-      if (modal === 'bid' && (next.phase !== 'bidding' || next.submitted.includes(id))) closeModal();
+      if (modal === 'bid' && (next.phase !== 'bidding' || next.submitted.includes(id) || next.players.find(p=>p.id===id)?.control==='bot')) closeModal();
+      if(modal==='claim'&&(next.phase!=='claim'||next.pending?.playerId!==id||next.players.find(p=>p.id===id)?.control==='bot'))closeModal();
       // Another player's bid must not replace the button or input under your pointer.
       if (prev?.phase === 'bidding' && next.phase === 'bidding' && prev.rollId === next.rollId && prev.submitted.includes(id) === next.submitted.includes(id) && document.querySelector('.table-game')) {
         next.players.forEach((p,i) => {
-          if (prev.submitted.includes(p.id) !== next.submitted.includes(p.id)) document.querySelector(`.table-seat[data-player="${CSS.escape(p.id)}"]`).outerHTML = playerSeat(p,i);
+          if (prev.submitted.includes(p.id) !== next.submitted.includes(p.id)||prev.players[i]?.controlReason!==p.controlReason||prev.players[i]?.online!==p.online) document.querySelector(`.table-seat[data-player="${CSS.escape(p.id)}"]`).outerHTML = playerSeat(p,i);
         });
-        if (next.submitted.includes(id)) document.querySelector('.action-panel').innerHTML = renderActionPanel();
+        if (next.submitted.includes(id)||prev.players.find(p=>p.id===id)?.control!==next.players.find(p=>p.id===id)?.control) document.querySelector('.action-panel').innerHTML = renderActionPanel();
       } else render();
       presentation.play(transfers); presentation.refresh();
       if (modal === 'inventory') renderModal();
     },
+    onTiming: updateClock,
     onSocial: social => {
       if (!state) return;
       state.social = social; const shared = sharedSelection(); scene.setSelected(shared);
@@ -182,7 +188,7 @@ function newConnection() {
       document.querySelectorAll('.dice-accessible-row [data-die]').forEach(el => { el.classList.toggle('chosen',shared.has(el.dataset.die)); el.setAttribute('aria-pressed',shared.has(el.dataset.die)); });
       presentation.refresh(social);
     },
-    onStatus: value => { const previous = status; status = value; const el = document.querySelector('#connection-status'); if (el) el.outerHTML = statusHTML(); if (state && previous !== value) render(); },
+    onStatus: value => { const previous = status; status = value; const el = document.querySelector('#connection-status'); if (el) el.outerHTML = statusHTML(); updateConnectionNotice();if (state && previous !== value) render(); },
     onError: message => { busy = false; toast(message); render(); },
     onClosed: message => { reset(); toast(message); },
   });
@@ -222,8 +228,8 @@ function renderLobby() {
   const allReady = state.players.length === state.capacity && state.players.every(p => p.ready && p.online);
   return `${header()}<main class="lobby"><div class="lobby-heading"><div><p>Пригласите друзей и приготовьтесь немного рискнуть.</p></div><span class="player-counter">${icon('users')} ${state.players.length}<span>/ ${state.capacity}</span></span></div><section class="lobby-seats" style="--seats:${state.capacity}">${Array.from({ length: state.capacity }, (_, i) => {
     const p = state.players[i];
-    return p ? `<article data-player="${p.id}" class="lobby-player ${p.ready ? 'is-ready' : 'is-thinking'} ${p.id === myId ? 'is-you' : ''}"><div class="seat-top"><span>МЕСТО ${String(i + 1).padStart(2, '0')}</span>${p.id === state.hostId ? `<span class="host-tag">${icon('cup')} Создатель</span>` : host ? `<button class="kick" data-kick="${p.id}" aria-label="Освободить место ${e(p.name)}">${icon('close')}</button>` : ''}</div><button class="lobby-avatar-button reaction-anchor" ${p.id === myId ? 'data-action="emotions"' : 'data-inspect="'+p.id+'"'} aria-label="${e(p.name)}${p.id === myId ? ', открыть эмоции' : ''}"><img class="lobby-avatar" src="${avatar(p.avatar)}" alt="Персонаж ${e(p.name)}"/></button><h2>${e(p.name)} ${p.id === myId ? '<small>вы</small>' : ''}</h2><span class="ready-state ${p.ready && p.online ? 'ready' : ''}">${p.online ? p.ready ? `${icon('check')} Готов к игре` : 'Выбирает момент…' : 'Ждём подключения'}</span>${i === state.first ? `<span class="first-player-tag">${icon('cup')} Первый бросок</span>` : ''}</article>` : `<article class="lobby-player empty"><div class="seat-top"><span>МЕСТО ${String(i + 1).padStart(2, '0')}</span></div><div class="empty-avatar">${icon('users')}</div><h2>Ждём друга</h2><button class="text-button" data-action="copy-link">Пригласить ${icon('arrow')}</button></article>`;
-  }).join('')}</section><div class="lobby-bottom"><section class="invite-panel"><div class="mini-heading">ССЫЛКА НА ВАШ СТОЛ</div><div class="invite-url"><span>${e(inviteURL())}</span><button class="icon-button" data-action="copy-link" aria-label="Скопировать приглашение">${icon('copy')}</button></div><p>Отправьте друзьям ссылку. Место игрока сохраняется при обновлении страницы.</p></section><section class="lobby-settings"><div class="mini-heading">${state.capacity === 3 ? '6 КУБИКОВ · 6 РАУНДОВ' : '9 КУБИКОВ · 4 РАУНДА'}</div>${host ? `<label class="first-select">Первым бросает <select id="first-player-select" aria-label="Первый игрок">${state.players.map((p, i) => `<option value="${i}" ${i === state.first ? 'selected' : ''}>${e(p.name)}</option>`).join('')}</select></label>` : `<p>Первым бросает <b>${e(state.players[state.first].name)}</b>.</p>`}<p>Выберите того, у кого самые прочные кости.</p></section></div><div class="lobby-controls"><div>${statusHTML()}<span class="lobby-hint">${allReady ? 'Все на месте. Можно начинать!' : `Готовы ${state.players.filter(p => p.ready).length} из ${state.capacity} игроков`}</span></div><div class="lobby-buttons"><button class="button ${me.ready ? 'secondary' : 'primary'}" data-action="ready">${icon(me.ready ? 'check' : 'dice')}${me.ready ? 'Я готов · отменить' : 'Я готов'}</button>${host ? `<button class="button ${allReady ? 'primary' : 'secondary'}" data-action="start" ${!allReady ? 'disabled' : ''}>Начать игру ${icon('arrow')}</button>` : ''}</div></div></main>`;
+    return p ? `<article data-player="${p.id}" class="lobby-player ${p.ready ? 'is-ready' : 'is-thinking'} ${p.id === myId ? 'is-you' : ''}"><div class="seat-top"><span>МЕСТО ${String(i + 1).padStart(2, '0')}</span>${p.id === state.hostId ? `<span class="host-tag">${icon('cup')} Создатель</span>` : host ? `<button class="kick" data-kick="${p.id}" aria-label="Освободить место ${e(p.name)}">${icon('close')}</button>` : ''}</div><button class="lobby-avatar-button reaction-anchor" ${p.id === myId ? 'data-action="emotions"' : 'data-inspect="'+p.id+'"'} aria-label="${e(p.name)}${p.id === myId ? ', открыть эмоции' : ''}"><img class="lobby-avatar" src="${avatar(p.avatar)}" alt="Персонаж ${e(p.name)}"/></button><h2>${e(p.name)} ${p.id === myId ? '<small>вы</small>' : p.bot ? '<span class="bot-badge">бот</span>' : ''}</h2><span class="ready-state ${p.ready && p.online ? 'ready' : ''}">${p.online ? p.ready ? `${icon('check')} Готов к игре` : 'Выбирает момент…' : 'Ждём подключения'}</span>${i === state.first ? `<span class="first-player-tag">${icon('cup')} Первый бросок</span>` : ''}</article>` : `<article class="lobby-player empty"><div class="seat-top"><span>МЕСТО ${String(i + 1).padStart(2, '0')}</span></div><div class="empty-avatar">${icon('users')}</div><h2>Ждём друга</h2><button class="text-button" data-action="copy-link">Пригласить ${icon('arrow')}</button>${host?'<button class="bot-add" data-action="add-bot">'+icon('dice')+' Добавить бота</button>':''}</article>`;
+  }).join('')}</section><div class="lobby-bottom"><section class="invite-panel"><div class="mini-heading">ССЫЛКА НА ВАШ СТОЛ</div><div class="invite-url"><span class="selectable">${e(inviteURL())}</span><button class="icon-button" data-action="copy-link" aria-label="Скопировать приглашение">${icon('copy')}</button></div><div class="invite-code">Код комнаты <b class="selectable">${state.code}</b></div><p>Отправьте друзьям ссылку. Место игрока сохраняется при обновлении страницы.</p></section><section class="lobby-settings"><div class="mini-heading">${state.capacity === 3 ? '6 КУБИКОВ · 6 РАУНДОВ' : '9 КУБИКОВ · 4 РАУНДА'}</div>${host ? `<label class="first-select">Первым бросает <select id="first-player-select" aria-label="Первый игрок">${state.players.map((p, i) => `<option value="${i}" ${i === state.first ? 'selected' : ''}>${e(p.name)}</option>`).join('')}</select></label>` : `<p>Первым бросает <b>${e(state.players[state.first].name)}</b>.</p>`}<p>Выберите того, у кого самые прочные кости.</p></section></div><div class="lobby-controls"><div>${statusHTML()}<span class="lobby-hint">${allReady ? 'Все на месте. Можно начинать!' : `Готовы ${state.players.filter(p => p.ready).length} из ${state.capacity} игроков`}</span></div><div class="lobby-buttons"><button class="button ${me.ready ? 'secondary' : 'primary'}" data-action="ready">${icon(me.ready ? 'check' : 'dice')}${me.ready ? 'Я готов · отменить' : 'Я готов'}</button>${host ? `<button class="button ${allReady ? 'primary' : 'secondary'}" data-action="start" ${!allReady ? 'disabled' : ''}>Начать игру ${icon('arrow')}</button>` : ''}</div></div></main>`;
 }
 const phaseNames = { roll: 'Новый бросок', bidding: 'Тайные ставки', collect: 'Сбор кубиков', claim: 'Карта ваша!', roundEnd: 'Раунд завершён', finished: 'Итоги партии' };
 function currentPlayer() { return state.players.find(p => p.id === (state.phase === 'claim' ? state.pending?.playerId : state.order[state.turn])); }
@@ -234,6 +240,27 @@ function cardStack(p, c, large = false) {
   const dice = p.dice.filter(d => d.card === c.id);
   return `<span class="held-card ${large ? 'large-card-stack' : ''}" aria-label="${e(cardLabel(c,state.wildRule))}, кубики: ${dice.map(d=>d.value).join(', ')}"><img src="${cardImage(c.id)}" alt="${e(cardLabel(c,state.wildRule))}" data-owned-card="${c.id}"/><span class="held-card-dice ${dice.length > 4 ? 'three-columns' : ''}">${dice.map(miniDie).join('')}</span></span>`;
 }
+
+function seatControl(p){
+  const label=p.bot?'Бот':p.controlReason==='afk'?'Бот · АФК':p.controlReason==='disconnected'?'Бот · нет связи':!p.online?'Нет связи':'';
+  return label?'<span class="seat-control">'+label+'</span>':'';
+}
+function clockHTML(){return '<div class="turn-clock"><div class="turn-clock-line">'+icon('clock')+'<span data-time-left></span><span data-time-caption>на ход</span></div><div class="turn-clock-track"><i data-time-progress></i></div></div>';}
+function updateClock(){
+  const remaining=timeRemaining(connection?.clock),clock=document.querySelector('.turn-clock');if(!clock)return;
+  clock.hidden=!remaining;if(!remaining)return;
+  clock.querySelector('[data-time-left]').textContent=String(Math.floor(remaining.seconds/60)).padStart(2,'0')+':'+String(remaining.seconds%60).padStart(2,'0');
+  clock.querySelector('[data-time-caption]').textContent=remaining.waiting?'после анимации':state?.phase==='bidding'?'на ставку':'на ход';
+  clock.querySelector('[data-time-progress]').style.transform='scaleX('+remaining.progress+')';
+  clock.classList.toggle('is-urgent',remaining.seconds<=10&&!remaining.waiting);clock.classList.toggle('is-waiting',remaining.waiting);
+}
+function updateConnectionNotice(){
+  const notice=document.querySelector('#connection-notice');
+  if(state&&status==='reconnecting'){
+    if(!notice){const el=document.createElement('div');el.id='connection-notice';el.className='connection-notice';el.setAttribute('role','status');el.textContent='Восстанавливаем связь… Ваше место сохранено, бот подхватит игру.';document.body.append(el);}
+  }else notice?.remove();
+}
+
 function playerSeat(p, i) {
   const mine = p.id === myId;
   const casting = (state.phase === 'roll' || rolling) && state.players[state.first].id === p.id;
@@ -244,12 +271,18 @@ function playerSeat(p, i) {
   const burned = state.log.some(ev => ev.round === state.round && ev.type === 'skip' && ev.playerId === p.id);
   const index = state.order.indexOf(p.id), flip = revealing && revealRound === state.round;
   return '<article class="table-seat seat-'+position+' '+(mine?'is-you ':'')+(current?'is-current ':'')+(submitted?'is-ready ':'')+(state.phase==='bidding'&&!submitted&&!rolling?'is-thinking ':'')+'" data-player="'+p.id+'">'
-    +'<div class="seat-profile"><button class="seat-avatar reaction-anchor" '+(mine?'data-action="emotions"':'data-inspect="'+p.id+'"')+' aria-label="'+e(p.name)+(mine?', открыть эмоции':', посмотреть коллекцию')+'"><img src="'+avatar(p.avatar)+'" alt=""/>'+(mine?'<span class="avatar-emotion-hint">☺</span>':'')+'</button><div class="seat-name"><b>'+e(p.name)+'</b>'+(mine?'<span class="private-score">'+score(p)+' очк.</span>':'')+(current?'<span class="seat-turn">Ваш ход</span>'.replace('Ваш ход',casting ? (mine?'Ваш бросок':'Бросает кубики') : mine?'Ваш ход':'Ходит'):state.phase==='bidding'&&!rolling?'<span class="seat-status">'+(submitted?'Готов':'Думает…')+'</span>':'')+'</div>'+(i===state.first?'<span class="seat-cup" title="Первый бросок">'+icon('cup')+'</span>':'')+'</div>'
+    +'<div class="seat-profile"><button class="seat-avatar reaction-anchor" '+(mine?'data-action="emotions"':'data-inspect="'+p.id+'"')+' aria-label="'+e(p.name)+(mine?', открыть эмоции':', посмотреть коллекцию')+'"><img src="'+avatar(p.avatar)+'" alt=""/>'+(mine?'<span class="avatar-emotion-hint">☺</span>':'')+'</button><div class="seat-name"><b>'+e(p.name)+'</b>'+seatControl(p)+(mine?'<span class="private-score">'+score(p)+' очк.</span>':'')+(current?'<span class="seat-turn">Ваш ход</span>'.replace('Ваш ход',casting ? (mine?'Ваш бросок':'Бросает кубики') : mine?'Ваш ход':'Ходит'):state.phase==='bidding'&&!rolling?'<span class="seat-status">'+(submitted?'Готов':'Думает…')+'</span>':'')+'</div>'+(i===state.first?'<span class="seat-cup" title="Первый бросок">'+icon('cup')+'</span>':'')+'</div>'
     +'<button class="seat-collection" data-inspect="'+p.id+'" aria-label="Рассмотреть кубики и карты: '+e(p.name)+'"><span class="seat-dice">'+p.dice.filter(d=>!d.card).map(miniDie).join('')+'</span><span class="seat-cards">'+p.cards.map(c=>cardStack(p,c)).join('')+'</span>'+(!p.dice.length&&!p.cards.length?'<span class="collection-empty">Кубики и карты</span>':'')+'</button>'
     +(submitted&&(!burned||revealing)?`<div class="bid-paper ${reveal?'is-open':''} ${flip?'is-flipping':''}" style="--bid-font:${Math.min(26,72/String(state.bids[p.id]??0).length)}px;--flip-delay:${Math.max(-800,index*420-(performance.now()-revealStarted))}ms"><div class="bid-paper-inner"><div class="bid-back">${mine&&!reveal?`<b>${state.bids[p.id]}</b>`:icon('lock')}</div><div class="bid-front"><img src="${cardImage('list')}" alt=""/><b>${reveal?state.bids[p.id]:''}</b></div></div></div>`:'')
     +(mine&&burned&&!revealing&&!state.social?.slammed?.includes(myId)?'<button class="seat-slam" data-action="slam" aria-label="Ударить по столу">✊</button>':'')+'</article>';
 }
 function renderActionPanel() {
+  const me=state.players.find(p=>p.id===myId);
+  if(me?.control==='bot'&&!me.bot&&!['lobby','finished'].includes(state.phase))return '<div class="afk-panel"><div><h3>За вас играет бот</h3><p>Ваши кубики, карты и место сохранены</p></div><button class="button primary" data-action="resume">Я здесь</button></div>';
+  const content=renderActionContent();
+  return ['roll','collect','claim'].includes(state.phase)||rolling ? content.replace('<div class="action-title">','<div class="action-title"><div class="active-turn-label">'+e(turnLabel(state,{rolling,revealing}))+'</div>') : content;
+}
+function renderActionContent() {
   const first = state.players[state.first], turn = currentPlayer();
   if (status !== 'online') return '<div class="action-title"><span class="spinner"></span><h3>Восстанавливаем соединение…</h3></div>';
   if (rolling) return '<div class="action-title"><span class="spinner"></span><h3>Кубики крутятся…</h3></div>';
@@ -272,7 +305,7 @@ function dieButton(d, chosen = false, attrs = '') {
   return `<button class="die-token ${d.color} ${chosen ? 'chosen' : ''} ${d.card ? 'locked' : ''}" ${attrs} aria-pressed="${chosen}" aria-label="${d.value}, ${({ blue: 'голубой', green: 'зелёный', yellow: 'жёлтый' })[d.color]} кубик${d.card ? ', закреплён на карте' : ''}"><span>${d.value}</span>${d.card ? icon('lock') : ''}</button>`;
 }
 function renderGame() {
-  return header()+'<main class="game table-game seats-'+state.capacity+'"><div class="table-round">Раунд <b>'+state.round+'</b> / '+totalRounds(state)+'</div><section class="table-area" aria-label="Игровой стол"><div class="table-wordmark" aria-hidden="true">КОСТИ<br>КРОКОДИЛА</div><aside class="card-dock">'+(state.active?'<button class="active-card-image" data-action="view-card" aria-label="Активная карта: '+e(cardLabel(state.active,state.wildRule))+'"><img src="'+cardImage(state.active.id)+'" alt="'+e(cardLabel(state.active,state.wildRule))+'"/></button>':'')+(state.nextCard?'<button class="next-card-image" data-card-preview="'+state.nextCard.id+'" aria-label="Следующая карта"><img src="'+cardImage(state.nextCard.id)+'" alt="Следующая карта"/></button>':'')+'</aside>'+(!scene.available&&!rolling?'<div class="dice-accessible-row fallback" role="group" aria-label="Кубики на столе">'+state.table.map(d=>dieButton(d,sharedSelection().has(d.id),'data-die="'+d.id+'" '+(state.phase!=='collect'||currentPlayer()?.id!==myId?'disabled':''))).join('')+'</div>':'')+'</section><section class="table-seats" aria-label="Игроки за столом">'+state.players.map(playerSeat).join('')+'</section><section class="action-panel" aria-live="polite">'+renderActionPanel()+'</section>'+(state.phase==='collect'&&currentPlayer()?.id===myId&&!rolling&&!revealing?'<div class="accessible-dice-controls" role="group" aria-label="Выбрать кубики с клавиатуры">'+state.table.map(d=>dieButton(d,selected.has(d.id),'data-die="'+d.id+'"')).join('')+'</div>':'')+'</main>';
+  return header()+'<main class="game table-game seats-'+state.capacity+'"><div class="table-round">Раунд <b>'+state.round+'</b> / '+totalRounds(state)+clockHTML()+'</div><section class="table-area" aria-label="Игровой стол"><div class="table-wordmark" aria-hidden="true">КОСТИ<br>КРОКОДИЛА</div><aside class="card-dock">'+(state.active?'<button class="active-card-image" data-action="view-card" aria-label="Активная карта: '+e(cardLabel(state.active,state.wildRule))+'"><img src="'+cardImage(state.active.id)+'" alt="'+e(cardLabel(state.active,state.wildRule))+'"/></button>':'')+(state.nextCard?'<button class="next-card-image" data-card-preview="'+state.nextCard.id+'" aria-label="Следующая карта"><img src="'+cardImage(state.nextCard.id)+'" alt="Следующая карта"/></button>':'')+'</aside>'+(!scene.available&&!rolling?'<div class="dice-accessible-row fallback" role="group" aria-label="Кубики на столе">'+state.table.map(d=>dieButton(d,sharedSelection().has(d.id),'data-die="'+d.id+'" '+(state.phase!=='collect'||currentPlayer()?.id!==myId?'disabled':''))).join('')+'</div>':'')+'</section><section class="table-seats" aria-label="Игроки за столом">'+state.players.map(playerSeat).join('')+'</section><section class="action-panel" aria-live="polite">'+renderActionPanel()+'</section>'+(state.phase==='collect'&&currentPlayer()?.id===myId&&state.players.find(p=>p.id===myId)?.control!=='bot'&&!rolling&&!revealing?'<div class="accessible-dice-controls" role="group" aria-label="Выбрать кубики с клавиатуры">'+state.table.map(d=>dieButton(d,selected.has(d.id),'data-die="'+d.id+'"')).join('')+'</div>':'')+'</main>';
 }
 function renderFinished() {
   results.ensure(state,motion);
@@ -288,25 +321,26 @@ function render() {
   app.innerHTML = landing ? renderLanding() : lobby ? renderLobby() : finished ? renderFinished() : renderGame();
   if (bid != null && document.querySelector('#bid-input')) document.querySelector('#bid-input').value = bid;
   if (focused && document.getElementById(focused)) { const el = document.getElementById(focused); el.focus({ preventScroll: true }); if (typeof selectionStart === 'number' && el.type === 'text') el.setSelectionRange(selectionStart, selectionStart); }
+  updateConnectionNotice();updateClock();
   if (!landing) {
     scene.setGame();
     if (lobby || finished) sceneEl.style.visibility = 'hidden';
     else {
       sceneEl.style.visibility = 'visible';
       const key = state.rollId ? String(state.rollId) : 'empty', changed = scene.lastRoll !== key;
-      scene.setDice(state.table, key, state.phase === 'collect' && currentPlayer()?.id === myId && !rolling && !revealing && !dealing, sharedSelection());
+      scene.setDice(state.table, key, state.phase === 'collect' && currentPlayer()?.id === myId && state.players.find(p=>p.id===myId)?.control!=='bot' && !rolling && !revealing && !dealing, sharedSelection());
       if (changed && !rolling) scene.settle();
     }
   } else sceneEl.style.visibility = 'visible';
   presentation.refresh();
   requestAnimationFrame(() => { scene.resize(); presentation.positionReactions(); });
-  if (!dealing && !revealing && state?.phase === 'claim' && state.pending?.playerId === myId && lastPhase !== `${state.round}:claim:${state.pending.cardId}`) {
+  if (!dealing && !revealing && state?.phase === 'claim' && state.pending?.playerId === myId && state.players.find(p=>p.id===myId)?.control!=='bot' && lastPhase !== `${state.round}:claim:${state.pending.cardId}`) {
     lastPhase = `${state.round}:claim:${state.pending.cardId}`; showModal('claim');
   }
   if (modal === 'claim' && state?.phase !== 'claim') closeModal();
 }
 function pickDie(id) {
-  if (!state || state.phase !== 'collect' || currentPlayer()?.id !== myId || rolling || revealing || dealing) return;
+  if (!state || state.phase !== 'collect' || currentPlayer()?.id !== myId || state.players.find(p=>p.id===myId)?.control==='bot' || rolling || revealing || dealing) return;
   if (selected.has(id)) selected.delete(id); else selected.add(id);
   beep(); render();
   pendingPick = { type: 'selection', ids: [...selected], rollId: state.rollId, turn: state.turn };
@@ -318,7 +352,7 @@ function renderModal() {
   if (!modal) return;
   let content = '', wide = false;
   if (modal === 'rules') {
-    content = `<h2>Как играть</h2><div class="rules-content"><p>Побеждает тот, кто наберёт больше очков на собранных кубиках. Обычный кубик приносит своё значение, кубик на карте — <b>вдвое больше</b>.</p><ol><li><b>Бросьте кубики.</b> Первый игрок добавляет из банка 6 случайных кубиков для троих или 9 для четверых. Остаток прошлого раунда бросается вместе с ними.</li><li><b>Сделайте тайную ставку.</b> Каждый вводит число очков, которые хочет забрать. Ставки откроются, когда ответят все.</li><li><b>Забирайте по очереди.</b> Меньше ставка — раньше ход. При равенстве приоритет идёт по часовой стрелке от первого игрока.</li><li><b>Соберите точную сумму.</b> Выберите один или несколько кубиков, сумма которых строго равна ставке. Если нужную сумму уже не собрать, ход автоматически пропускается.</li><li><b>Получайте карты.</b> Если свободных кубиков хватает для активной карты, её обязательно нужно забрать. Вы выбираете, какие подходящие кубики закрепить. Они больше не перемещаются.</li></ol><div class="rule-callout">Четырёхцветная карта: <b>по 2 кубика каждого цвета</b>, всего 6. Их значения тоже удваиваются.</div><p>Следующая карта становится активной сразу. Если она подходит кому-то ещё, игрок получает её вне своего хода. При нескольких претендентах приоритет — от первого игрока по часовой стрелке. Цепочка продолжается, пока есть подходящие карты.</p><p>Неразобранные кубики переходят в следующий раунд, первый игрок меняется по часовой стрелке. Последняя порция из банка означает последний раунд: <b>6 раундов для троих, 4 для четверых</b>. Равные итоговые очки означают общую победу.</p><p class="rules-sources">По <a href="https://docs.google.com/document/d/1a3O1wNkeYDUVxFunPz8pDYVMTn34xOmogsrRMy_Nu40/edit" target="_blank" rel="noopener noreferrer">правилам автора</a> и <a href="https://docs.google.com/document/d/1ZOs0DHDGN_tFIcAwbbAu3JZKFGjJg8XwoSiFCXfUQAs/edit" target="_blank" rel="noopener noreferrer">руководству по комплектации</a>.</p></div>`;
+    content = `<h2>Как играть</h2><div class="rules-content"><p>Побеждает тот, кто наберёт больше очков на собранных кубиках. Обычный кубик приносит своё значение, кубик на карте — <b>вдвое больше</b>.</p><ol><li><b>Бросьте кубики.</b> Первый игрок добавляет из банка 6 случайных кубиков для троих или 9 для четверых. Остаток прошлого раунда бросается вместе с ними.</li><li><b>Сделайте тайную ставку.</b> Каждый вводит число очков, которые хочет забрать. Ставки откроются, когда ответят все.</li><li><b>Забирайте по очереди.</b> Меньше ставка — раньше ход. При равенстве приоритет идёт по часовой стрелке от первого игрока.</li><li><b>Соберите точную сумму.</b> Выберите один или несколько кубиков, сумма которых строго равна ставке. Если нужную сумму уже не собрать, ход автоматически пропускается.</li><li><b>Получайте карты.</b> Если свободных кубиков хватает для активной карты, её обязательно нужно забрать. Вы выбираете, какие подходящие кубики закрепить. Они больше не перемещаются.</li></ol><div class="rule-callout">Четырёхцветная карта: <b>по 2 кубика каждого цвета</b>, всего 6. Их значения тоже удваиваются.</div><p>Следующая карта становится активной сразу. Если она подходит кому-то ещё, игрок получает её вне своего хода. При нескольких претендентах приоритет — от первого игрока по часовой стрелке. Цепочка продолжается, пока есть подходящие карты.</p><p>Неразобранные кубики переходят в следующий раунд, первый игрок меняется по часовой стрелке. Последняя порция из банка означает последний раунд: <b>6 раундов для троих, 4 для четверых</b>. Равные итоговые очки означают общую победу.</p><p>При потере связи бот временно подхватит игру. После 45 секунд ожидания ставки или 35 секунд выбора кубиков управление тоже получает бот. Нажмите «Я здесь», чтобы вернуться. Ботов для свободных мест добавляет создатель комнаты.</p><p class="rules-sources">По <a href="https://docs.google.com/document/d/1a3O1wNkeYDUVxFunPz8pDYVMTn34xOmogsrRMy_Nu40/edit" target="_blank" rel="noopener noreferrer">правилам автора</a> и <a href="https://docs.google.com/document/d/1ZOs0DHDGN_tFIcAwbbAu3JZKFGjJg8XwoSiFCXfUQAs/edit" target="_blank" rel="noopener noreferrer">руководству по комплектации</a>.</p></div>`;
   }
   if (modal === 'inventory') {
     const p = state.players.find(p => p.id === inspectId); if (!p) { closeModal(); return; }
@@ -356,7 +390,7 @@ function renderModal() {
   }
   if (modal === 'leave') content = `<div class="eyebrow">ВЫХОД ИЗ КОМНАТЫ</div><h2>${myId === state.hostId ? 'Закрыть этот стол?' : 'Покинуть игру?'}</h2><p>${myId === state.hostId ? 'Вы создатель. Комната закроется для всех игроков.' : state.phase === 'lobby' ? 'Ваше место освободится для другого игрока.' : 'Партия будет ждать вас. Вернуться можно в этой вкладке через кнопку восстановления.'}</p><div class="modal-actions"><button class="button secondary" data-action="close-modal">Остаться</button><button class="button danger" data-action="confirm-leave">${myId === state.hostId ? 'Закрыть комнату' : 'Выйти'}</button></div>`;
   if (modal === 'restore') content = `<div class="eyebrow">ЗНАКОМЫЙ СТОЛ</div><h2>Вернуться в комнату?</h2><p>В этой вкладке сохранилось ваше место. Попробуем восстановить подключение.</p><div class="modal-actions"><button class="button secondary" data-action="discard-restore">Начать заново</button><button class="button primary" data-action="restore-room">Вернуться ${icon('arrow')}</button></div>`;
-  if (modal === 'copy') content = `<h2>Ваше приглашение</h2><p>Скопируйте текст из поля.</p><input class="copy-fallback" readonly value="${e(inspectId)}" aria-label="Текст приглашения"/>`;
+  if (modal === 'copy') content = `<h2>Ваше приглашение</h2><p>Скопируйте текст из поля.</p><input class="copy-fallback selectable" readonly value="${e(inspectId)}" aria-label="Текст приглашения"/>`;
   document.body.classList.add('modal-open');
   const wasFocused = document.activeElement?.dataset?.claimDie;
   modalRoot.innerHTML = `<div class="modal-backdrop" data-action="backdrop"><section class="modal ${wide ? 'wide' : ''} ${modal === 'bid' ? 'bid-modal' : ''}" role="dialog" aria-modal="true" aria-label="${modal === 'claim' ? 'Выбор кубиков для карты' : 'Информация об игре'}" tabindex="-1"><button class="modal-close icon-button" data-action="close-modal" aria-label="Закрыть">${icon('close')}</button>${content}</section></div>`;
@@ -379,6 +413,8 @@ document.addEventListener('click', async event => {
     beep(); renderModal(); return;
   }
   switch (button.dataset.action) {
+    case 'add-bot': send({type:'addBot'}); break;
+    case 'resume': send({type:'resume'}); break;
     case 'emotions': presentation.togglePicker(); break;
     case 'slam': sendSignal({ type: 'slam' }); break;
     case 'write-bid': showModal('bid'); break;
@@ -454,6 +490,6 @@ async function fullscreen() {
 }
 document.querySelector('#landscape-button').addEventListener('click', fullscreen);
 window.addEventListener('beforeunload', event => { if (state && !['lobby', 'finished'].includes(state.phase)) { event.preventDefault(); event.returnValue = ''; } });
-window.addEventListener('online', () => connection?.poll());
+setInterval(()=>updateClock(),250);
 render();
 if (RoomConnection.saved()) showModal('restore');
